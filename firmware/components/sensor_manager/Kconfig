@@ -1,0 +1,15 @@
+menu "ESP-BMC: SensorManager (NTC + DHT11)"
+
+    config ESP_BMC_SENSOR_DHT_IS_DHT22_FORMAT
+        bool "DHT-Sensor liefert DHT22-Datenformat (0.1-Aufloesung) statt DHT11"
+        default n
+        help
+            Reale Hardware ist ein DHT11 (docs/bom.md, Ganzzahlformat).
+            Wokwis Simulator stellt keinen eigenen DHT11-Part bereit, nur
+            "wokwi-dht22" - dessen Protokoll ist bit-/pruefsummenkompatibel,
+            nutzt aber das DHT22-Datenformat (0.1-Aufloesung, Vorzeichenbit).
+            Diese Option wird deshalb ausschliesslich in
+            sdkconfig.wokwi-sim auf "y" gesetzt (siehe docs/entscheidungen.md,
+            Eintrag P3 Sensorik), die reale Hardware-Env bleibt auf "n".
+
+endmenu

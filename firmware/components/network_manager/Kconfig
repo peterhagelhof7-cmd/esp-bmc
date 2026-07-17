@@ -1,0 +1,15 @@
+menu "ESP-BMC: NetworkManager (WLAN)"
+
+    config ESP_BMC_WIFI_SSID
+        string "WLAN-SSID (Platzhalter, siehe Pflichtenheft 3.4)"
+        default "CHANGE_ME_SSID"
+        help
+            Noch keine LittleFS-Konfigurationsablage (ConfigManager persistiert
+            noch nicht, siehe Pflichtenheft Abschnitt 12). Bis dahin wird die
+            SSID hier als Platzhalter ueber Kconfig/sdkconfig gepflegt.
+
+    config ESP_BMC_WIFI_PASSWORD
+        string "WLAN-Passwort (Platzhalter)"
+        default "CHANGE_ME_PASSWORD"
+
+endmenu

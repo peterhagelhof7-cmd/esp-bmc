@@ -1,0 +1,18 @@
+user login web
+user login ssh
+vpn up
+vpn down
+user setting save
+user system reboot
+user system reset
+user set tastsperre power host
+user set tastsperre reset host
+user set power host (push or hold)
+user set reset host
+system name
+system type
+system ip
+system vpn ip
+alert temp dht
+alert temp 10K B3590
+ntp sync (OK nicht OK)

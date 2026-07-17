@@ -1,0 +1,9 @@
+initial setup und betrieb
+baue ein script: 
+das auf einem neuen ESP unser projekt flashen kann aus dem noch zu erstellenden repo
+das aus dem später zu erstellenden git repo eine default config herunterläd diese muss in klartext (xml txt) les und editierbar sein
+das script soll diese config dann im editor öffnen sodass der user diese bearbeiten kann
+nachdem der benutzer das gespeichert hat und den editor schließt usb upload in den esp remote
+weitere abfrage vpn config importieren, wenn ja dann in dem ordner in dem das script ausgeführt wird nach einer .conf datei suchen (werden mehrere gefunden, auswahl anzeigen) und diese per usb upload in den esp remote
+weitere abfrage wlan config? esp remote wlan scan ausführen ergebnisse in einer nummerierten liste anzeigen, benutzer wählt den indexeintrag, nächste frage nach psk, nicht bei offenem wlan (diese info muss in die liste
+ggf. firmware upload aus dem noch zu erstellenden git repo

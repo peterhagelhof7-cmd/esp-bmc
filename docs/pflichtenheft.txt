@@ -1,0 +1,281 @@
+PFLICHTENHEFT – ESP-REMOTE (ESP32-S3 PC-Fernsteuerung)
+
+1. SYSTEMARCHITEKTUR
+
+Das System basiert auf einem ESP32-S3 (diymore DevKitC-1 N16R8) mit
+folgenden Software-Komponenten:
+
+- ESP-IDF (nativer Framework, kein Arduino-Layer - wegen TinyUSB-
+  Composite-Device und WireGuard-Integration, siehe Abschnitt 6/7)
+- FreeRTOS (ESP-IDF Standard)
+- TinyUSB (USB-CDC + USB-HID als Composite-Device)
+- HTTP/WebSocket-Server (ESP-IDF esp_http_server + WebSocket-Handler)
+- WireGuard-Bibliothek: droscy/esp_wireguard (aktiv gepflegte Fork von
+  trombik/esp_wireguard, ESP-IDF-6.0.1-kompatibel - siehe
+  docs/entscheidungen.md, P1-Machbarkeits-Spike 2026-07-17). Kompiliert
+  und Flash-/RAM-Bedarf gemessen, echter Tunnelaufbau noch nicht auf
+  Hardware verifiziert.
+- LittleFS Dateisystem (Konfiguration, WireGuard-Config, Schwellwerte)
+- NTP-Client (Zeitstempel für Log/Benachrichtigungen)
+
+------------------------------------------------------------
+
+2. SOFTWARESTRUKTUR
+
+2.1 Tasks (FreeRTOS)
+
+Task: GpioTask
+- Polling-Intervall: wenige ms (Entprellung Taster-Erfassung)
+- Liest Power-/Reset-Taster-Eingänge, Power-/HDD-LED-Eingänge
+- Wertet Tastschutz-Zustand aus ConfigManager aus
+- Steuert Optokoppler-Ausgänge (Taster-Weiterleitung) und LED-Ausgänge
+
+Task: SensorTask
+- Intervall: 60 Sekunden (analog Sensormeter-Familie)
+- Liest NTC (ADC + Spannungsteiler-Umrechnung), DHT11
+- Plausibilitätsprüfung, Schwellwert-Vergleich, Trigger Benachrichtigung
+
+Task: NetworkTask
+- WLAN-Verbindung, Reconnect-Logik
+- Übergabe an WireGuardTask sobald IP vorhanden
+
+Task: WireGuardTask
+- Tunnel-Aufbau/-Erhalt auf Basis der hochgeladenen Konfiguration
+- Health-Check, Reconnect bei Tunnelausfall
+
+Task: WebServerTask
+- HTTP-Server, REST-API, WebSocket-Endpunkt für die serielle Konsole
+- Reagiert auf Config-Upload (WireGuard-Konfiguration)
+
+Task: UsbTask
+- TinyUSB-Stack-Betrieb (CDC + HID)
+- Bidirektionale Weiterleitung CDC ↔ WebSocket-Konsole
+
+------------------------------------------------------------
+
+3. SOFTWAREMODULE
+
+3.1 GpioManager
+- Kapselt die vier Taster-/LED-Kanäle (2x Eingang Taster-Erfassung, 2x
+  Ausgang Optokoppler, 2x Ausgang LED-Ansteuerung, 2x Eingang
+  LED-Erfassung)
+- Führt den Ablauf aus Lastenheft Abschnitt 10.4 aus
+
+3.2 SensorManager
+- NTC-Auswertung (Spannungsteiler → Widerstand → Temperatur, siehe
+  docs/bom.md "Spannungsteiler-Dimensionierung" - noch offen)
+- DHT11-Auswertung
+- Schwellwert-Vergleich gegen ConfigManager-Werte
+
+3.3 ConfigManager
+- Laden/Speichern der Konfiguration aus LittleFS (Format noch offen -
+  Kandidat: XML analog Sensormeter-Familie, siehe Abschnitt 12)
+- Schwellwerte, Tastschutz-Zustand, WireGuard-Konfiguration,
+  Webserver-Zugangsdaten
+
+3.4 NetworkManager
+- WLAN-Verbindungsaufbau, Reconnect
+- Kein LAN/Ethernet an diesem Board (im Unterschied zur
+  Sensormeter-Familie) - reine WLAN-Anbindung
+
+3.5 WireGuardManager
+- Tunnel-Konfiguration aus hochgeladener Config-Datei
+- Verbindungsstatus für Webinterface/Diagnose
+
+3.6 WebServerManager
+- HTTP-Routen, WebSocket-Handler für serielle Konsole
+- Authentifizierung (siehe Abschnitt 7, "Offene technische
+  Entscheidungen" zu VPN-unabhängigem Zugriff)
+- REST-Endpunkt zum Auslesen des StorageManager-Inhalts (Config/Logs/
+  Diagnose, siehe 3.9) - genaues Antwortformat noch offen, Zugriffspunkt
+  selbst ist Anforderung ab P5 (docs/entscheidungen.md, 2026-07-17)
+
+3.7 UsbManager
+- TinyUSB-Deskriptor-Konfiguration (Composite: CDC + HID)
+- Weiterleitung CDC-Datenstrom ↔ WebSocket
+- CDC-Kommando zum Auslesen des StorageManager-Inhalts (Config/Logs/
+  Diagnose, siehe 3.9) - genaues Kommandoformat noch offen, Zugriffspunkt
+  selbst ist Anforderung ab P4 (docs/entscheidungen.md, 2026-07-17)
+
+3.8 NotificationManager
+- Schwellwert-Überschreitung → Benachrichtigung (Versandweg noch offen,
+  siehe Abschnitt 12)
+
+3.9 StorageManager
+- Mountet die "storage"-LittleFS-Partition (firmware/partitions.csv,
+  docs/entscheidungen.md 2026-07-17)
+- Reine Lese-/Schreib-Grundfunktionen, bewusst ohne Vorgabe für
+  Dateiformat/-namen - Config/Logs/wireguard.conf/SSH-Host-Key-Ablage
+  folgt als eigener Schritt (Abschnitt 12)
+- Gemeinsame Grundlage für UsbManager (3.7) und WebServerManager (3.6),
+  die beide Lesezugriff auf den Inhalt anbieten sollen
+
+------------------------------------------------------------
+
+4. DATENSPEICHERUNG (LittleFS)
+
+4.1 Konfiguration
+- WLAN-Zugangsdaten
+- WireGuard-Konfiguration (Interface-Keys, Peer, Endpoint) - Ablage als
+  eigene Datei, nicht im Haupt-Config-Format (analog
+  branding-logo.bin-Muster aus der Sensormeter-Familie: sensible/binäre
+  Nutzdaten separat von der strukturierten Konfiguration)
+- Schwellwerte je Messgröße (NTC-Temperatur, DHT11-Temperatur,
+  DHT11-Luftfeuchte)
+- Tastschutz-Zustand
+- Webserver-Zugangsdaten (Passwort-Hash, kein Klartext - Detailformat
+  noch offen)
+
+4.2 Log/Diagnose
+- Format noch nicht festgelegt (Kandidat: analog Sensormeter-Familie
+  persistenter /log.txt-Ringpuffer)
+
+------------------------------------------------------------
+
+5. WEBARCHITEKTUR
+
+5.1 Backend (ESP32-S3)
+- REST-API für Status/Steuerung (Endpunkt-Struktur noch offen)
+- WebSocket-Endpunkt für serielle Konsole
+- Upload-Endpunkt für WireGuard-Konfiguration
+
+5.2 Frontend
+- HTML + CSS + JS, Konsole im Browser über WebSocket
+- Kein Framework-Unterbau vorausgesetzt (analog Sensormeter-Familie:
+  Vanilla JS, kein Build-Step nötig)
+
+------------------------------------------------------------
+
+6. USB-ARCHITEKTUR
+
+TinyUSB Composite-Device mit zwei Interfaces:
+- CDC (virtueller COM-Port) - Hauptkanal für die bidirektionale
+  Konsolen-Kommunikation mit dem gesteuerten PC
+- HID (Tastatur) - Fallback-Kanal für Eingaben, wenn der PC (noch) keine
+  Software auf dem CDC-Kanal bereithält (BIOS/Bootloader-Phase)
+
+Beide Interfaces laufen gleichzeitig über denselben nativen USB-Port des
+ESP32-S3. Der zweite USB-C-Port des Boards (USB-UART-Bridge) bleibt für
+Flashen/Debuggen reserviert und ist von dieser Architektur unabhängig.
+
+6.1 Bildschirmzugriff - kein drittes USB-Interface
+Bewusst kein USB-Video-/Grafik-Interface im Composite-Device: weder
+Erfassung der grafischen PC-Ausgabe (HDMI/VGA über USB-Host - am
+ESP32-S3-USB-Host-Full-Speed-Limit gescheitert) noch Emulation eines
+USB-Anzeigegeräts (von BIOS/UEFI grundsätzlich nicht als POST-Bildschirm
+nutzbar, unabhängig von Auflösung/Protokoll). Stattdessen Abschnitt 6.2.
+Details und Quellen: docs/entscheidungen.md.
+
+6.2 Serieller BIOS-Zugriff (optional, board-abhängig)
+Ein weiterer ESP32-S3-UART (getrennt vom TinyUSB-CDC-Kanal aus 6.0) wird
+an den seriellen Mainboard-Header geführt, um "Serial Port Console
+Redirection" mitzulesen, falls die Ziel-Firmware das unterstützt (siehe
+Lastenheft Abschnitt 7.3). Rein textbasiert, kein Video. Elektrisch
+TTL-UART direkt oder über einen RS-232-Pegelwandler, je nach
+Mainboard-Header - Bauteilbedarf noch nicht in docs/bom.md nachgetragen.
+
+------------------------------------------------------------
+
+7. SICHERHEITSARCHITEKTUR
+
+- WireGuard-VPN als primärer, empfohlener Zugriffsweg
+- Webserver zusätzlich auch außerhalb der VPN-Verbindung erreichbar
+  (siehe Lastenheft Abschnitt 9) - erfordert eigene Authentifizierung
+  unabhängig von der VPN-Zugehörigkeit
+- Taster-Weiterleitung ausschließlich über die galvanisch entkoppelten
+  Optokoppler-Ausgänge (siehe Lastenheft Abschnitt 10.3) - kein direkter
+  elektrischer Kontakt zwischen ESP-eigenen Erfassungs-Pins und
+  Mainboard-Headern
+- Tastschutz als softwareseitige Sperre, unabhängig von der elektrischen
+  Entkopplung (siehe Ablauf Lastenheft 10.4)
+
+------------------------------------------------------------
+
+8. FEHLERBEHANDLUNG
+
+8.1 Netzwerkfehler
+- WLAN-Reconnect-Logik (Details noch offen, Vorbild Sensormeter-Familie:
+  Fallback-Access-Point-Konzept ggf. nicht sinnvoll übertragbar, da
+  ESP-BMC kein LAN-Fallback wie WT32-ETH01 hat)
+
+8.2 WireGuard-Fehler
+- Tunnel-Ausfall-Erkennung und Reconnect-Versuch (Details abhängig von
+  gewählter Bibliothek, siehe Abschnitt 12)
+
+8.3 Sensorfehler
+- Ungültige Messwerte markieren, keine Benachrichtigung aus
+  Plausibilitätsfehlern auslösen
+
+------------------------------------------------------------
+
+9. PERFORMANCE-DESIGN
+
+Zielwerte (vorläufig, analog Sensormeter-Familie):
+- Webserver non-blocking
+- Taster-Erfassung mit geringer Latenz (Entprellung im ms-Bereich, kein
+  spürbares Delay zwischen physischem Tastendruck und Weiterleitung)
+
+------------------------------------------------------------
+
+10. MEMORY-BUDGET
+
+Flash: 16 MB, PSRAM: 8 MB (siehe docs/board-recherche.md).
+
+Deutlich mehr Reserve als ursprünglich angenommen (siehe
+board-recherche.md - initial war von 8 MB Flash ohne PSRAM ausgegangen
+worden). Trotzdem bleibt das Flash-Budget ein Risikofaktor, weil
+WireGuard-Krypto (Curve25519, ChaCha20-Poly1305) + TinyUSB +
+HTTP/WebSocket-Server gemeinsam auf diesem Chip laufen sollen.
+
+P1-Machbarkeits-Spike (2026-07-17, siehe docs/entscheidungen.md) hat das
+konkret gemessen: WLAN (lwIP/mbedtls) + WireGuard (inkl. libsodium)
+alleine belegen bereits 771709 Byte Flash = 73,6 % der aktuell
+konfigurierten 1-MB-OTA-App-Partition, RAM-Bedarf 37968 Byte (11,6 %,
+unkritisch). Bei 16 MB Gesamtflash kein Platzproblem, aber die
+Standard-"two_ota"-Partitionstabelle (1 MB je Slot) reicht nicht mehr,
+sobald TinyUSB (P4) und der HTTP/WebSocket-Server (P5) dazukommen -
+eigene, groessere Partitionstabelle vor P4/P5 noetig (siehe Abschnitt 12).
+
+------------------------------------------------------------
+
+11. STARTUP FLOW
+
+BOOT →
+  Init Hardware (GPIO, ADC, USB) →
+  Load Config (LittleFS) →
+  Init WLAN →
+  Start WireGuard-Tunnel (falls konfiguriert) →
+  Start Webserver/WebSocket →
+  Start USB (CDC+HID) →
+  Normal Operation (GpioTask + SensorTask laufen bereits ab Hardware-Init,
+  unabhängig vom Netzwerkstatus - Kernfunktion Taster-Weiterleitung soll
+  auch ohne Netzwerk funktionieren, siehe Lastenheft Abschnitt 11)
+
+------------------------------------------------------------
+
+12. OFFENE TECHNISCHE ENTSCHEIDUNGEN
+
+Bewusst nicht vorentschieden, sondern hier als Liste festgehalten:
+
+- WireGuard-Bibliothek: entschieden (droscy/esp_wireguard), siehe
+  docs/entscheidungen.md 2026-07-17. Weiterhin offen: echter
+  Tunnelaufbau/Handshake-Test auf echter Hardware.
+- Partitionstabelle: eigene, groessere App-Partitionen noetig (Standard-
+  "two_ota"-Preset mit 1 MB je Slot reicht nicht fuer WireGuard + TinyUSB +
+  Webserver zusammen, siehe Abschnitt 10). Groesse/Layout noch nicht
+  festgelegt.
+- SSH-Zugang zur seriellen Konsole: echtes SSH-Protokoll (schwergewichtig,
+  eigene Bibliothek nötig) vs. einfacher TCP-Tunnel durch die bereits
+  verschlüsselte WireGuard-Verbindung (deutlich leichtgewichtiger, kein
+  SSH-Client-Zwang beim Nutzer nötig).
+- Authentifizierung des Webservers für den Nicht-VPN-Zugriffsweg (siehe
+  Abschnitt 7) - Mechanismus noch nicht festgelegt.
+- Versandweg für Schwellwert-Benachrichtigungen (MQTT/Home-Assistant
+  analog Sensormeter-Familie, oder ein anderer Weg).
+- Konfigurationsformat (XML analog Sensormeter-Familie vs. JSON o. ä.).
+- Log-/Diagnoseformat auf dem Gerät.
+- Exakte GPIO-Pinbelegung für alle 8 IO-Kanäle (siehe docs/bom.md) -
+  hängt vom finalen Pinout des DevKitC-1-Boards ab.
+- Bauteilbedarf für den seriellen BIOS-Zugriff (Abschnitt 6.2): ob ein
+  RS-232-Pegelwandler nötig ist, hängt vom jeweiligen Mainboard-Header ab
+  - noch nicht in docs/bom.md nachgetragen.

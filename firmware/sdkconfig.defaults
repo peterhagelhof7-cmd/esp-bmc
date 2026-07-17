@@ -1,0 +1,27 @@
+# ESP-BMC - sdkconfig-Defaults
+# Aktiviert PSRAM (8 MB, N16R8-Modul, siehe docs/board-recherche.md).
+# Octal-PSRAM ist bei den meisten ESP32-S3-N16R8-Modulen verbaut - falls das
+# reale Board Quad-PSRAM hat, muss CONFIG_SPIRAM_MODE_OCT auf
+# CONFIG_SPIRAM_MODE_QUAD umgestellt werden (noch nicht am realen Board
+# verifiziert, siehe docs/pflichtenheft.txt Abschnitt 12).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# 16 MB Flash, eigene Partitionstabelle (siehe firmware/partitions.csv und
+# docs/entscheidungen.md, Eintrag "Partitionstabelle") - loest das
+# Standardpreset "two_ota" (1 MB je Slot) ab, das nach P3 schon bei 75%
+# Auslastung eines Slots lag.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# UsbManager (P4, docs/entscheidungen.md) - TinyUSB-Composite-Device CDC+HID
+# ueber den nativen USB-Port. Deskriptoren bleiben NULL/Kconfig-generiert.
+CONFIG_TINYUSB_CDC_ENABLED=y
+CONFIG_TINYUSB_CDC_COUNT=1
+CONFIG_TINYUSB_HID_COUNT=1
+
+# WebServerManager (P5) - WebSocket-Konsole braucht das explizit, Default ist aus.
+CONFIG_HTTPD_WS_SUPPORT=y

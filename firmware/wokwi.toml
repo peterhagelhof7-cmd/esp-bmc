@@ -1,0 +1,7 @@
+[wokwi]
+version = 1
+# Zeigt bewusst auf env:wokwi-sim (PSRAM deaktiviert), nicht auf die
+# "echte" Board-Env - siehe Kommentar in platformio.ini und
+# sdkconfig.defaults.wokwi-sim.
+elf = ".pio/build/wokwi-sim/firmware.elf"
+firmware = ".pio/build/wokwi-sim/firmware.bin"

@@ -1,0 +1,17 @@
+# ESP-BMC - eigene Partitionstabelle (16 MB Flash, N16R8)
+#
+# Ersetzt das PlatformIO-Standardpreset "partitions_two_ota.csv" (1 MB je
+# OTA-Slot) - siehe docs/entscheidungen.md, Eintrag "Partitionstabelle".
+#
+# nvs+otadata ergeben zusammen exakt 0x7000 Byte, ab Start 0x9000 landet
+# ota_0 dadurch exakt auf der von App-Partitionen geforderten 64-KB-Grenze
+# (0x10000) - ohne diesen Trick wuerde die naechste 64-KB-Grenze erst bei
+# 0x20000 liegen und ~60 KB Padding verschenken (gleiches Prinzip wie im
+# ESP-IDF-Stock-Preset).
+#
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xE000,   0x2000,
+ota_0,      app,  ota_0,    0x10000,  0x200000,
+ota_1,      app,  ota_1,    0x210000, 0x200000,
+storage,    data, spiffs,   0x410000, 0x100000,

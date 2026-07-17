@@ -1,0 +1,6 @@
+# Nur fuer die Wokwi-Simulation (env:wokwi-sim) - siehe Kommentar in
+# platformio.ini. Deaktiviert PSRAM komplett, weil Wokwis ESP32-S3-Emulation
+# den Octal-PSRAM-Speichertest nicht besteht und die hier simulierte P2-Logik
+# (GpioManager) kein PSRAM benoetigt. Das reale Board (env oben) behaelt
+# CONFIG_SPIRAM=y ueber sdkconfig.defaults.
+CONFIG_SPIRAM=n

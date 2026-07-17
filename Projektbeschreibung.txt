@@ -1,0 +1,96 @@
+Projekt: PC-Remote-Controller mit ESP32-S3
+
+Ziel
+====
+Entwicklung eines kompakten Moduls auf Basis eines ESP32-S3 zur Fernsteuerung,
+Überwachung und Diagnose eines Standard-PCs über WLAN und WireGuard-VPN.
+
+Hardwarebasis
+=============
+- diymore ESP32-S3 DevKitC-1 N16R8 (siehe docs/board-recherche.md)
+- Native USB (USB-CDC) + separater USB-UART-Bridge-Port zum Flashen/Debuggen
+- WLAN 2,4 GHz, Bluetooth 5.0
+- 16 MB Flash
+- 8 MB PSRAM
+
+Funktionen
+==========
+
+Überwachung
+-----------
+- Power-LED des Mainboards erfassen
+- HDD-LED des Mainboards erfassen
+- Status der Gehäuse-Power-Taste erfassen
+- Status der Gehäuse-Reset-Taste erfassen
+- auswerten eines NTC 10K B3590 zur erfassung eines termperatur wertes
+- auswerten eines dht11 zur erfassung eines weiteren temp und luftfeuchtewertes
+- versenden einer benachrichtigung bei überschreiten vorher festgelegter schwellwerte
+
+Steuerung
+---------
+- Power-Taste auslösen
+- Reset-Taste auslösen
+- Gehäuse-Power-LED ansteuern
+- Gehäuse-HDD-LED ansteuern
+
+Kommunikation
+-------------
+- WLAN
+- WireGuard VPN
+- HTTP-Webserver
+- WebSocket
+- Webinterface mit serieller konsole zu dem steuernden pc, uploadmöglichkeit für die wireguard config
+- ssh zugang zur seriellen konsole
+
+
+
+USB
+===
+Der ESP32-S3 verwendet seinen nativen USB-Controller und stellt gegenüber dem
+angeschlossenen PC eine USB-CDC-Schnittstelle bereit. 
+und gibt sich als usb hid tastatur aus sodass eine bidirektionale kommunikation möglich wird
+
+Der integrierte Webserver stellt die serielle Konsole über WebSockets im Browser
+zur Verfügung. und gibt sich als usb hid tastatur aus sodass eine bidirektionale kommunikation möglich wird
+
+Sicherheit
+==========
+Der Webserver soll auch über eine WireGuard-VPN-Verbindung erreichbar
+sein.
+
+Elektrischer Anschluss
+======================
+LED-Eingänge:
+- direkt auf pins des board
+
+Taster-Erfassung (Gehäuse-Power-Taste, Gehäuse-Reset-Taste):
+- Taster-Pins des Gehäuses direkt auf Pins des ESP verbunden (2 eigene
+  Eingangs-Pins, Pull-up, gegen GND schaltend)
+- kein gemeinsamer Knoten mit der Mainboard-Ansteuerung (siehe unten) -
+  daher hier keine Entkopplung nötig, reine Erfassung auf ESP-eigener Seite
+
+Taster-Weiterleitung (ESP -> Mainboard Power/Reset-Header):
+- galvanisch entkoppelt über PC817-Optokoppler (2 eigene Ausgangs-Kanäle,
+  Power und Reset getrennt von den Erfassungs-Pins oben)
+- je Kanal 1 Vorwiderstand für die Optokoppler-LED-Seite
+- Mehrkosten ggü. Direktanschluss: ~7 € einmalig (10er-Pack PC817, davon 2 genutzt)
+
+Ablauf Tastendruck:
+1. Taster wird gedrückt -> zieht zugehörigen ESP-Eingangs-Pin auf LOW
+2. Firmware prüft Tastschutz-Bedingung aus dem Webinterface
+3. wenn kein Tastschutz aktiv: ESP setzt zugehörigen Ausgangs-Pin (über
+   Optokoppler an den Mainboard-Header) auf LOW und leitet den
+   Tastendruck damit weiter
+
+Software
+========
+- ESP-IDF
+- FreeRTOS
+- TinyUSB
+- HTTP/WebSocket Server
+- WireGuard Bibliothek
+
+Projektziel
+===========
+Ein kompaktes Modul zur vollständigen Fernbedienung und Statusüberwachung eines
+Standard-PCs mit sicherem VPN-Zugang und integrierter serieller Konsole.

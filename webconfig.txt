@@ -1,0 +1,39 @@
+webserver funktionen:
+übersichts seite mit:
+ip local
+ip vpn
+status VPN (grün e fläche wenn verbunden, rot wenn getrennt)
+Ziel IP oder dns name des VPN
+temperatur sensor NTC 10K B3590
+alle werte DHT sensor
+Uptime
+sensor werte in einem chart (eines für alle) 24h auf der vertikale, stündliche werte
+eine grüne fläche die "leuchtet" wenn ein power LED Signal am entsprechenden eingang anliegt
+eine Rote Fläche die "blinkt" wenn im verlauf der letzten 10 sec ein signal am eingang anlag
+
+Geschützte Seite
+(auf jeder seite ein Link zu statusseite hinzuügen)
+(userverwaltung rollenbasiert)
+Benutzer rollen:
+Admin = web Console + hinterlegen eines SSH key zur verbindungsherstellung direkt über ssh + Alle Einstellungen + Log Download + Userverwaltung + VPN und LAN Config + steuerung der taster (power und reset, tastschutz)
+Verwalter = alle Einstellungen + Log Download + Userverwaltung + VPN und LAN Config + steuerung der taster (power und reset, tastschutz, ausführung muss mit dem eigenen passwort bestätigt werden)
+SSH User = web Console + hinterlegen eines SSH key zur verbindungsherstellung direkt über ssh
+Leser = Log Download nur Sensorwerte
+
+Seite web console:
+eine interaktive webconsole
+
+Seite Logs:
+Download des Audit log (herstellen von verbingung über web oder ssh wird hier geloggt) sowie ansteuerung taster, erkennung der betätigung der physischen taster
+Download der Sensorwerten (24h) 
+
+Seite Einstellungen
+puldown Ip einstellungen (dhcp oder statisch) 
+Ip Einstellungen, nur aktiv bei statisch (vor übernehmen ping check wie bei SM) wenn dhcp aktiv, anzeige aktuelle werte
+Upload einer wireguard.conf vor dem speichern der conf default route aus dieser entfernen !
+löchen der aktuellen vpn konfiguration
+Wlan scan (wie bei SM-WLAN) wichtig, offene wlans im scan ohne schloss anzeigen, dann kein PSK
+userverwaltung setzten eines benutzernamens (keine sonderzeichen) setzten eines passworts (8 zeichen mindestens, groß klein und zahlen, mindestens 2 der 3 kriterien erfüllen)
+download der gesamtconfig
+reboot (eintrag ins log wer diesen ausgelöst hat)
+reset (nur einstellungen, oder einstellungen und werte)

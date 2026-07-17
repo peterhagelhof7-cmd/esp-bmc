@@ -1,0 +1,19 @@
+name: Power-Taster druecken (Lastenheft 10.4)
+version: 1
+author: ESP-BMC
+
+steps:
+  - wait-serial: "Power: erfasst=0"
+  - delay: 500ms
+  - set-control:
+      part-id: btn-power-sense
+      control: pressed
+      value: 1
+  - delay: 200ms
+  - wait-serial: "erfasst=1"
+  - set-control:
+      part-id: btn-power-sense
+      control: pressed
+      value: 0
+  - delay: 1500ms
+  - wait-serial: "erfasst=0"

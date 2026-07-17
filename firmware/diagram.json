@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "author": "ESP-BMC",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-s3-devkitc-1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+
+    { "type": "wokwi-pushbutton", "id": "btn-power-sense", "top": -80, "left": 220, "attrs": { "color": "green" } },
+    { "type": "wokwi-pushbutton", "id": "btn-reset-sense", "top": -80, "left": 320, "attrs": { "color": "yellow" } },
+
+    { "type": "wokwi-led", "id": "led-power-drive", "top": 20, "left": 420, "attrs": { "color": "green" } },
+    { "type": "wokwi-led", "id": "led-reset-drive", "top": 20, "left": 480, "attrs": { "color": "yellow" } },
+
+    { "type": "wokwi-led", "id": "led-power-in", "top": 120, "left": 420, "attrs": { "color": "green" } },
+    { "type": "wokwi-led", "id": "led-hdd-in", "top": 120, "left": 480, "attrs": { "color": "red" } },
+
+    { "type": "wokwi-led", "id": "led-power-out", "top": 220, "left": 420, "attrs": { "color": "green" } },
+    { "type": "wokwi-led", "id": "led-hdd-out", "top": 220, "left": 480, "attrs": { "color": "red" } },
+
+    { "type": "wokwi-resistor", "id": "r-power-drive", "top": 20, "left": 400, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "r-reset-drive", "top": 20, "left": 460, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "r-power-in", "top": 120, "left": 400, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "r-hdd-in", "top": 120, "left": 460, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "r-power-out", "top": 220, "left": 400, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "r-hdd-out", "top": 220, "left": 460, "attrs": { "value": "220" } },
+
+    { "type": "wokwi-potentiometer", "id": "ntc-stand-in", "top": 320, "left": 400, "attrs": { "value": "512" } },
+    { "type": "wokwi-dht22", "id": "dht11", "top": 320, "left": 520, "attrs": { "temperature": "24", "humidity": "40" } },
+    { "type": "wokwi-resistor", "id": "r-dht-pullup", "top": 320, "left": 480, "attrs": { "value": "4700" } }
+  ],
+  "connections": [
+    ["esp:TX", "$serialMonitor:RX", "", []],
+    ["esp:RX", "$serialMonitor:TX", "", []],
+
+    ["btn-power-sense:1.l", "esp:4", "black", []],
+    ["btn-power-sense:2.l", "esp:GND.1", "black", []],
+    ["btn-reset-sense:1.l", "esp:5", "black", []],
+    ["btn-reset-sense:2.l", "esp:GND.2", "black", []],
+
+    ["esp:6", "r-power-drive:1", "green", []],
+    ["r-power-drive:2", "led-power-drive:A", "green", []],
+    ["led-power-drive:C", "esp:GND.1", "black", []],
+
+    ["esp:7", "r-reset-drive:1", "yellow", []],
+    ["r-reset-drive:2", "led-reset-drive:A", "yellow", []],
+    ["led-reset-drive:C", "esp:GND.1", "black", []],
+
+    ["esp:15", "r-power-in:1", "green", []],
+    ["r-power-in:2", "led-power-in:A", "green", []],
+    ["led-power-in:C", "esp:GND.1", "black", []],
+
+    ["esp:16", "r-hdd-in:1", "red", []],
+    ["r-hdd-in:2", "led-hdd-in:A", "red", []],
+    ["led-hdd-in:C", "esp:GND.1", "black", []],
+
+    ["esp:17", "r-power-out:1", "green", []],
+    ["r-power-out:2", "led-power-out:A", "green", []],
+    ["led-power-out:C", "esp:GND.1", "black", []],
+
+    ["esp:18", "r-hdd-out:1", "red", []],
+    ["r-hdd-out:2", "led-hdd-out:A", "red", []],
+    ["led-hdd-out:C", "esp:GND.1", "black", []],
+
+    ["ntc-stand-in:VCC", "esp:3V3.1", "red", []],
+    ["ntc-stand-in:GND", "esp:GND.1", "black", []],
+    ["ntc-stand-in:SIG", "esp:1", "blue", []],
+
+    ["dht11:VCC", "esp:3V3.1", "red", []],
+    ["dht11:GND", "esp:GND.1", "black", []],
+    ["dht11:SDA", "esp:2", "blue", []],
+    ["r-dht-pullup:1", "esp:3V3.1", "red", []],
+    ["r-dht-pullup:2", "esp:2", "blue", []]
+  ]
+}

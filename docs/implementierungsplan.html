@@ -1,0 +1,552 @@
+<title>ESP-BMC — Implementierungsplan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --paper: #E7E4DA;
+    --paper-raised: #FBFAF6;
+    --paper-sunken: #DEDACE;
+    --ink: #1E2530;
+    --ink-muted: #5B6472;
+    --line: #C7C2B4;
+    --copper: #B5622A;
+    --copper-strong: #8F4A1E;
+    --copper-wash: rgba(181, 98, 42, 0.12);
+    --patina: #3F6E63;
+    --patina-wash: rgba(63, 110, 99, 0.12);
+    --indigo: #3B5B8C;
+    --indigo-strong: #2B4368;
+    --rust: #A63D2E;
+    --rust-wash: rgba(166, 61, 46, 0.1);
+    --shadow: 0 1px 2px rgba(30, 37, 48, 0.06), 0 6px 20px -8px rgba(30, 37, 48, 0.18);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #141A22;
+      --paper-raised: #1B222C;
+      --paper-sunken: #0F141A;
+      --ink: #E9E4D8;
+      --ink-muted: #8E97A3;
+      --line: #313A46;
+      --copper: #E08A4C;
+      --copper-strong: #F2A268;
+      --copper-wash: rgba(224, 138, 76, 0.14);
+      --patina: #74B7A6;
+      --patina-wash: rgba(116, 183, 166, 0.13);
+      --indigo: #7FA0D9;
+      --indigo-strong: #A0BBE6;
+      --rust: #E38A78;
+      --rust-wash: rgba(227, 138, 120, 0.12);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -10px rgba(0, 0, 0, 0.55);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #141A22;
+    --paper-raised: #1B222C;
+    --paper-sunken: #0F141A;
+    --ink: #E9E4D8;
+    --ink-muted: #8E97A3;
+    --line: #313A46;
+    --copper: #E08A4C;
+    --copper-strong: #F2A268;
+    --copper-wash: rgba(224, 138, 76, 0.14);
+    --patina: #74B7A6;
+    --patina-wash: rgba(116, 183, 166, 0.13);
+    --indigo: #7FA0D9;
+    --indigo-strong: #A0BBE6;
+    --rust: #E38A78;
+    --rust-wash: rgba(227, 138, 120, 0.12);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -10px rgba(0, 0, 0, 0.55);
+  }
+  :root[data-theme="light"] {
+    --paper: #E7E4DA;
+    --paper-raised: #FBFAF6;
+    --paper-sunken: #DEDACE;
+    --ink: #1E2530;
+    --ink-muted: #5B6472;
+    --line: #C7C2B4;
+    --copper: #B5622A;
+    --copper-strong: #8F4A1E;
+    --copper-wash: rgba(181, 98, 42, 0.12);
+    --patina: #3F6E63;
+    --patina-wash: rgba(63, 110, 99, 0.12);
+    --indigo: #3B5B8C;
+    --indigo-strong: #2B4368;
+    --rust: #A63D2E;
+    --rust-wash: rgba(166, 61, 46, 0.1);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono {
+    font-family: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  h1, h2, h3 {
+    font-family: "Iowan Old Style", "Sitka Text", Georgia, serif;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .wrap {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 56px 24px 88px;
+  }
+
+  header {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 40px;
+  }
+  .eyebrow {
+    font-family: inherit;
+    font: 600 12px/1 ui-monospace, Consolas, monospace;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--copper);
+  }
+  h1 {
+    font-size: clamp(28px, 4vw, 38px);
+    font-weight: 600;
+    margin-top: 10px;
+    color: var(--ink);
+  }
+  .lede {
+    max-width: 62ch;
+    color: var(--ink-muted);
+    font-size: 15.5px;
+    margin-top: 12px;
+  }
+  .lede .mono { color: var(--ink); }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    margin-top: 22px;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+  }
+  .legend-item { display: flex; align-items: center; gap: 7px; }
+  .swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+
+  .roadmap { position: relative; }
+
+  .stage {
+    display: grid;
+    grid-template-columns: 46px 1fr;
+    column-gap: 18px;
+  }
+
+  .gutter {
+    position: relative;
+    display: flex;
+    justify-content: center;
+  }
+  .gutter::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    background: var(--line);
+    transform: translateX(-50%);
+  }
+  .stage:first-child .gutter::before { top: 22px; }
+  .stage:last-child .gutter::before { bottom: calc(100% - 22px); }
+
+  .node {
+    position: relative;
+    z-index: 1;
+    width: 15px;
+    height: 15px;
+    margin-top: 16px;
+    border-radius: 50%;
+    background: var(--paper-raised);
+    border: 2px solid var(--copper);
+  }
+  .node.baseline { border-color: var(--ink-muted); border-style: dashed; }
+  .node.terminal { background: var(--copper); }
+
+  .stage-body { padding-bottom: 40px; }
+  .stage:last-child .stage-body { padding-bottom: 0; }
+
+  .stage-label {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-top: 12px;
+    margin-bottom: 12px;
+  }
+  .stage-num {
+    font: 600 12px/1 ui-monospace, Consolas, monospace;
+    color: var(--ink-muted);
+    letter-spacing: 0.08em;
+  }
+  .stage-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: 0.01em;
+  }
+  .stage-note {
+    font-size: 12.5px;
+    color: var(--ink-muted);
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 14px;
+  }
+
+  .cards.single { grid-template-columns: minmax(230px, 1fr); max-width: 460px; }
+
+  .card {
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--copper);
+    border-radius: 5px;
+    padding: 16px 18px;
+    box-shadow: var(--shadow);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .card { transition: none; }
+  }
+  .card:hover { transform: translateY(-1px); }
+
+  .card.baseline-card {
+    border-left-color: var(--ink-muted);
+    background: var(--paper-sunken);
+    box-shadow: none;
+  }
+
+  .card.gate-card {
+    border-left-color: var(--rust);
+  }
+
+  .card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .card-code {
+    font: 600 12px/1 ui-monospace, Consolas, monospace;
+    color: var(--copper);
+    background: var(--copper-wash);
+    padding: 3px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.03em;
+  }
+  .card h3 { font-size: 16.5px; font-weight: 600; margin-bottom: 2px; }
+  .card-modules {
+    font: 500 10.5px/1.4 ui-monospace, Consolas, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink-muted);
+    margin-bottom: 10px;
+  }
+
+  .card ul {
+    margin: 0 0 10px;
+    padding-left: 18px;
+    font-size: 13.5px;
+    color: var(--ink);
+  }
+  .card li { margin-bottom: 3px; }
+  .card li::marker { color: var(--ink-muted); }
+
+  .card-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .dep {
+    font-size: 11.5px;
+    color: var(--ink-muted);
+  }
+  .dep .mono { color: var(--ink); }
+
+  .pill {
+    font: 600 10.5px/1 ui-monospace, Consolas, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 4px 8px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .pill.gate { background: var(--rust-wash); color: var(--rust); }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    font-size: 12.5px;
+    color: var(--ink-muted);
+  }
+  footer .mono { color: var(--ink); }
+
+  @media (max-width: 520px) {
+    .stage { grid-template-columns: 30px 1fr; column-gap: 10px; }
+    .wrap { padding: 40px 16px 64px; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">ESP-BMC · ESP32-S3</div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <svg viewBox="0 0 48 48" fill="none" width="30" height="30" style="flex-shrink:0;">
+        <rect x="10" y="14" width="28" height="20" rx="3" stroke="var(--line)" stroke-width="2.2"/>
+        <circle cx="24" cy="24" r="5" fill="var(--indigo)"/>
+        <line x1="16" y1="34" x2="16" y2="40" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/>
+        <line x1="24" y1="34" x2="24" y2="40" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/>
+        <line x1="32" y1="34" x2="32" y2="40" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/>
+        <circle cx="24" cy="24" r="2" fill="var(--paper-raised)"/>
+      </svg>
+      <h1>Implementierungsplan</h1>
+    </div>
+    <p class="lede">
+      Reihenfolge der Neuentwicklung gemäß <span class="mono">lastenheft.txt</span> /
+      <span class="mono">pflichtenheft.txt</span>. Parallele Karten innerhalb einer Stufe
+      können gleichzeitig bearbeitet werden, sobald ihre Voraussetzungen stehen.
+    </p>
+    <div class="legend">
+      <span class="legend-item"><span class="swatch" style="background:var(--rust)"></span>Kritisches Gate — Ergebnis entscheidet über den weiteren Kurs</span>
+    </div>
+  </header>
+
+  <div class="roadmap">
+
+    <!-- Start -->
+    <div class="stage">
+      <div class="gutter"><div class="node baseline"></div></div>
+      <div class="stage-body">
+        <div class="stage-label">
+          <span class="stage-num">START</span>
+          <span class="stage-title">Ausgangspunkt</span>
+        </div>
+        <div class="cards single">
+          <div class="card baseline-card">
+            <div class="card-head">
+              <h3 style="font-size:15px">Kein bestehender Prototyp</h3>
+            </div>
+            <div class="card-modules">Neuentwicklung</div>
+            <ul>
+              <li>Board-Entscheidung getroffen (diymore ESP32-S3 DevKitC-1 N16R8)</li>
+              <li>Lastenheft, Pflichtenheft, BOM vorhanden - noch kein Code</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage 1 -->
+    <div class="stage">
+      <div class="gutter"><div class="node"></div></div>
+      <div class="stage-body">
+        <div class="stage-label">
+          <span class="stage-num">STUFE 1</span>
+          <span class="stage-title">Grundgerüst</span>
+        </div>
+        <div class="cards single">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-code">P0</span>
+            </div>
+            <h3>Projektstruktur &amp; WLAN-Basis</h3>
+            <div class="card-modules">Alle Module (Gerüst) · NetworkManager</div>
+            <ul>
+              <li>ESP-IDF-Projekt gegliedert nach GpioManager / SensorManager / ConfigManager / NetworkManager / WebServerManager / UsbManager</li>
+              <li>WLAN-Verbindungsaufbau, Reconnect-Grundgerüst</li>
+              <li>LittleFS-Grundgerüst (ConfigManager mit Default-Konfiguration)</li>
+            </ul>
+            <div class="card-foot">
+              <span class="dep">Voraussetzung: <span class="mono">—</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage 2 -->
+    <div class="stage">
+      <div class="gutter"><div class="node"></div></div>
+      <div class="stage-body">
+        <div class="stage-label">
+          <span class="stage-num">STUFE 2</span>
+          <span class="stage-title">Parallel — Machbarkeits-Spike &amp; Kernfunktionen</span>
+        </div>
+        <div class="cards">
+          <div class="card gate-card">
+            <div class="card-head"><span class="card-code">P1</span></div>
+            <h3>Machbarkeits-Spike WireGuard</h3>
+            <div class="card-modules">WireGuardManager (Spike)</div>
+            <ul>
+              <li>Minimaler Tunnelaufbau mit Testkonfiguration auf echter Hardware</li>
+              <li>Flash-/RAM-Verbrauch messen (Curve25519, ChaCha20-Poly1305)</li>
+              <li>Ergebnis entscheidet über Fortführung wie geplant oder Kurskorrektur (siehe Pflichtenheft Abschnitt 12)</li>
+            </ul>
+            <div class="card-foot">
+              <span class="dep">Vor.: <span class="mono">P0</span></span>
+              <span class="pill gate">Kritisches Gate</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="card-code">P2</span></div>
+            <h3>Taster-/LED-IO</h3>
+            <div class="card-modules">GpioManager · GpioTask</div>
+            <ul>
+              <li>Taster-Erfassung (2 Eingänge, Pull-up) getrennt von Taster-Weiterleitung (2 Optokoppler-Ausgänge)</li>
+              <li>Tastschutz-Logik aus ConfigManager auswerten</li>
+              <li>LED-Erfassung (Power/HDD) und LED-Ansteuerung</li>
+            </ul>
+            <div class="card-foot">
+              <span class="dep">Vor.: <span class="mono">P0</span></span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="card-code">P3</span></div>
+            <h3>Sensorik</h3>
+            <div class="card-modules">SensorManager · SensorTask</div>
+            <ul>
+              <li>NTC-Auswertung über Spannungsteiler, DHT11-Auswertung</li>
+              <li>Schwellwert-Vergleich, Trigger für NotificationManager</li>
+            </ul>
+            <div class="card-foot">
+              <span class="dep">Vor.: <span class="mono">P0</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage 3 -->
+    <div class="stage">
+      <div class="gutter"><div class="node"></div></div>
+      <div class="stage-body">
+        <div class="stage-label">
+          <span class="stage-num">STUFE 3</span>
+          <span class="stage-title">Parallel — Schnittstellen</span>
+        </div>
+        <div class="cards">
+          <div class="card">
+            <div class="card-head"><span class="card-code">P4</span></div>
+            <h3>USB Composite-Device</h3>
+            <div class="card-modules">UsbManager · TinyUSB</div>
+            <ul>
+              <li>CDC + HID gleichzeitig über nativen USB-Port</li>
+              <li>Bidirektionale Weiterleitung CDC ↔ interne Konsolen-Queue</li>
+              <li>Zweiter USB-C-Port (UART-Bridge) bleibt für Flashen/Debuggen reserviert</li>
+            </ul>
+            <div class="card-foot">
+              <span class="dep">Vor.: <span class="mono">P0</span></span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="card-code">P5</span></div>
+            <h3>Webserver &amp; WebSocket-Konsole</h3>
+            <div class="card-modules">WebServerManager · WebServerTask</div>
+            <ul>
+              <li>REST-API, WebSocket-Endpunkt für serielle Konsole</li>
+              <li>Anzeige Überwachungswerte (P2, P3), Bedienung Steuerungsfunktionen</li>
+              <li>Config-Upload-Endpunkt für WireGuard-Konfiguration (noch ohne aktive Tunnelnutzung)</li>
+            </ul>
+            <div class="card-foot">
+              <span class="dep">Vor.: <span class="mono">P0, P2, P3</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage 4 -->
+    <div class="stage">
+      <div class="gutter"><div class="node"></div></div>
+      <div class="stage-body">
+        <div class="stage-label">
+          <span class="stage-num">STUFE 4</span>
+          <span class="stage-title">WireGuard-Integration &amp; Fernzugriff</span>
+        </div>
+        <div class="cards">
+          <div class="card">
+            <div class="card-head"><span class="card-code">P6</span></div>
+            <h3>WireGuard-Normalbetrieb</h3>
+            <div class="card-modules">WireGuardManager</div>
+            <ul>
+              <li>Produktive Tunnelnutzung auf Basis des P1-Spikes, Reconnect-Logik</li>
+              <li>Webserver zusätzlich über VPN erreichbar (siehe Sicherheitsarchitektur)</li>
+            </ul>
+            <div class="card-foot">
+              <span class="dep">Vor.: <span class="mono">P1, P5</span></span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="card-code">P7</span></div>
+            <h3>SSH-Zugang zur seriellen Konsole</h3>
+            <div class="card-modules">WebServerManager / eigener Dienst</div>
+            <ul>
+              <li>Umsetzung noch offen: echtes SSH-Protokoll vs. TCP-Tunnel durch WireGuard (siehe Pflichtenheft Abschnitt 12)</li>
+              <li>Zugriff auf dieselbe Konsole wie P5</li>
+            </ul>
+            <div class="card-foot">
+              <span class="dep">Vor.: <span class="mono">P5, P6</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage 5 -->
+    <div class="stage">
+      <div class="gutter"><div class="node terminal"></div></div>
+      <div class="stage-body">
+        <div class="stage-label">
+          <span class="stage-num">STUFE 5</span>
+          <span class="stage-title">Integration &amp; Inbetriebnahme</span>
+        </div>
+        <div class="cards single">
+          <div class="card">
+            <div class="card-head"><span class="card-code">P8</span></div>
+            <h3>Verkabelung, Flash &amp; End-to-End-Test</h3>
+            <div class="card-modules">Hardware · Test</div>
+            <ul>
+              <li>Verkabelung nach <span class="mono">docs/bom.md</span>, Flash auf diymore ESP32-S3 DevKitC-1 N16R8</li>
+              <li>Test: Taster-Weiterleitung inkl. Tastschutz, Sensorwerte, WLAN-Reconnect, WireGuard-Tunnel, USB CDC+HID, Webinterface</li>
+            </ul>
+            <div class="card-foot">
+              <span class="dep">Voraussetzung: <span class="mono">P1–P7</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    Quelle: <span class="mono">docs/lastenheft.txt</span>, <span class="mono">docs/pflichtenheft.txt</span>,
+    <span class="mono">docs/bom.md</span>, <span class="mono">docs/board-recherche.md</span> im Projektordner
+    <span class="mono">ESP-BMC</span>.
+  </footer>
+</div>

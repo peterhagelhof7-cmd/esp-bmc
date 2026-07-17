@@ -1,0 +1,169 @@
+LASTENHEFT – ESP-REMOTE (ESP32-S3 PC-Fernsteuerung)
+
+1. PROJEKT
+Projektname: ESP-BMC
+
+------------------------------------------------------------
+
+2. SYSTEMBASIS
+
+Hardware:
+- diymore ESP32-S3 DevKitC-1 N16R8 (16 MB Flash, 8 MB PSRAM, 2x USB-C)
+  siehe docs/board-recherche.md
+- NTC-Thermistor 10K B3590 (Temperatur)
+- DHT11 (Temperatur + Luftfeuchte, zweiter Messpunkt)
+- 2x PC817-Optokoppler (galvanisch entkoppelte Taster-Weiterleitung an
+  das PC-Mainboard)
+
+Details zu Bauteilen und Mengen: docs/bom.md
+
+------------------------------------------------------------
+
+3. ZIELSETZUNG
+
+Entwicklung eines kompakten Moduls zur Fernsteuerung, Überwachung und
+Diagnose eines Standard-PCs über WLAN und WireGuard-VPN. Das Modul wird
+im/am PC-Gehäuse verbaut, liest Status-LEDs und Taster-Zustände des
+Mainboards, kann Power-/Reset-Tasten simulieren, erfasst Umgebungswerte
+(Temperatur, Luftfeuchte) und stellt eine serielle Konsole zum
+angeschlossenen PC bereit (per USB und per Webinterface).
+
+------------------------------------------------------------
+
+4. ÜBERWACHUNG
+
+4.1 Mainboard-Status (Lesen)
+- Power-LED des Mainboards erfassen
+- HDD-LED des Mainboards erfassen
+- Status der Gehäuse-Power-Taste erfassen (eigener Eingangs-Pin, siehe
+  Abschnitt 10)
+- Status der Gehäuse-Reset-Taste erfassen (eigener Eingangs-Pin, siehe
+  Abschnitt 10)
+
+4.2 Umgebungswerte
+- NTC 10K B3590: ein Temperaturwert
+- DHT11: ein weiterer Temperatur- und ein Luftfeuchtewert
+
+4.3 Benachrichtigungen
+- Versand einer Benachrichtigung bei Überschreiten vorher festgelegter
+  Schwellwerte (Grenzwerte je Messgröße konfigurierbar, Versandweg noch
+  nicht festgelegt - Kandidaten: MQTT/Home-Assistant analog zur
+  Sensormeter-Familie, oder eine einfache Webhook-/Mail-Anbindung; siehe
+  Pflichtenheft "Offene technische Entscheidungen")
+
+------------------------------------------------------------
+
+5. STEUERUNG
+
+- Power-Taste auslösen (über Optokoppler-Ausgang an Mainboard-Header)
+- Reset-Taste auslösen (über Optokoppler-Ausgang an Mainboard-Header)
+- Gehäuse-Power-LED ansteuern
+- Gehäuse-HDD-LED ansteuern
+- Tastschutz: softwareseitige Sperre im Webinterface, die das
+  Weiterleiten eines erfassten Tastendrucks unterdrückt (siehe Ablauf in
+  Abschnitt 10.3)
+
+------------------------------------------------------------
+
+6. KOMMUNIKATION
+
+- WLAN (2,4 GHz)
+- WireGuard-VPN
+- HTTP-Webserver
+- WebSocket
+- Webinterface mit serieller Konsole zum gesteuerten PC, inkl.
+  Upload-Möglichkeit für die WireGuard-Konfiguration
+- SSH-Zugang zur seriellen Konsole (Umsetzung noch offen - echtes
+  SSH-Protokoll vs. einfacher TCP-Tunnel durch WireGuard, siehe
+  Pflichtenheft)
+
+------------------------------------------------------------
+
+7. USB-SCHNITTSTELLE
+
+Der ESP32-S3 verwendet seinen nativen USB-Controller und stellt
+gegenüber dem angeschlossenen PC zwei Funktionen gleichzeitig bereit
+(Composite-Device):
+
+7.1 USB-CDC
+Virtuelle serielle Schnittstelle zum PC - Basis für die bidirektionale
+Konsolen-Kommunikation.
+
+7.2 USB-HID (Tastatur)
+Gibt sich zusätzlich als USB-HID-Tastatur aus, um Eingaben auch dann an
+den PC weiterzugeben, wenn dort kein Treiber/keine Software auf die
+CDC-Schnittstelle wartet (z. B. BIOS/Bootloader-Zugriff, entsprechend dem
+Vorbild bekannter Mini-KVM-Lösungen).
+
+7.3 Bildschirmzugriff (Serial Console Redirection) - optional, board-abhängig
+Textausgabe von BIOS/UEFI (POST, Setup-Menü, teils früher Boot-Text) über
+einen eigenen ESP32-S3-UART am seriellen Mainboard-Header mitlesen, sofern
+die Firmware des jeweiligen Mainboards "Serial Port Console Redirection"
+unterstützt (verbreitet bei Server-/Workstation-Boards, bei
+Consumer-/Gaming-Boards meist nicht vorhanden). Kein Bild, nur Text -
+dafür bereits ab dem ersten Boot-Moment verfügbar, nicht erst sobald ein
+Betriebssystem läuft.
+
+Ausdrücklich NICHT Teil des Funktionsumfangs: Erfassung der grafischen
+Bildschirmausgabe (HDMI/VGA) und Emulation einer USB-Grafikkarte - beide
+Ansätze wurden geprüft und als mit dieser Hardwarebasis nicht umsetzbar
+verworfen. Begründung und Quellen: docs/entscheidungen.md
+"Bildschirmzugriff in jedem Betriebszustand" (2026-07-16).
+
+------------------------------------------------------------
+
+8. WEBINTERFACE
+
+- Serielle Konsole zum gesteuerten PC im Browser (über WebSocket)
+- Upload-Möglichkeit für die WireGuard-Konfigurationsdatei
+- Anzeige der Überwachungswerte aus Abschnitt 4
+- Bedienung der Steuerungsfunktionen aus Abschnitt 5
+- Tastschutz aktivieren/deaktivieren
+
+------------------------------------------------------------
+
+9. SICHERHEIT
+
+- Der Webserver soll auch über eine WireGuard-VPN-Verbindung erreichbar
+  sein (zusätzlich zum regulären Netzwerkzugriff, nicht ausschließlich
+  darüber - siehe Entscheidung vom 2026-07-16).
+- Da der reguläre Zugriff damit nicht auf die VPN-Verbindung beschränkt
+  ist, wird eine eigene Authentifizierung für den Webserver benötigt
+  (Umsetzung noch offen, siehe Pflichtenheft).
+
+------------------------------------------------------------
+
+10. ELEKTRISCHER ANSCHLUSS
+
+10.1 LED-Eingänge (Power-LED, HDD-LED)
+Direkt auf Pins des Boards - reine Lesefunktion, kein zusätzliches
+Bauteil.
+
+10.2 Taster-Erfassung (Gehäuse-Power-Taste, Gehäuse-Reset-Taste)
+Taster-Pins des Gehäuses direkt auf zwei eigene Eingangs-Pins des ESP
+verbunden (Pull-up, gegen GND schaltend). Kein gemeinsamer Knoten mit der
+Mainboard-Ansteuerung (10.3) - reine Erfassung auf ESP-eigener Seite,
+daher keine Entkopplung nötig.
+
+10.3 Taster-Weiterleitung (ESP → Mainboard Power-/Reset-Header)
+Galvanisch entkoppelt über je einen PC817-Optokoppler pro Taste (2
+eigene Ausgangs-Kanäle, komplett getrennt von den Erfassungs-Pins aus
+10.2).
+
+10.4 Ablauf eines Tastendrucks
+1. Taster wird gedrückt → zieht den zugehörigen ESP-Eingangs-Pin auf LOW
+2. Firmware prüft die Tastschutz-Bedingung aus dem Webinterface
+3. Ist kein Tastschutz aktiv: ESP setzt den zugehörigen Ausgangs-Pin
+   (über den Optokoppler an den Mainboard-Header) auf LOW und leitet den
+   Tastendruck damit weiter
+
+------------------------------------------------------------
+
+11. NICHTFUNKTIONALE ANFORDERUNGEN
+
+- Kompaktes Modul, für den Einbau im/am PC-Gehäuse geeignet
+- Sicherer Fernzugriff (WireGuard-VPN als primärer Zugriffsweg)
+- Lokale Kernfunktion (Überwachung, Taster-Weiterleitung) auch ohne
+  Netzwerkverbindung funktionsfähig
+- Wartbar über Webinterface
+- Erweiterbar um zusätzliche Sensoren/Meldewege

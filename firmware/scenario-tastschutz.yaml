@@ -1,0 +1,24 @@
+# HINWEIS: Tastschutz ist noch nicht an das (spaeter kommende) Webinterface
+# angebunden (nur die reine config_manager-Funktion existiert bisher).
+# Fuer diesen Test muss in main.c app_main() vorher testweise
+# config_manager_set_tastschutz(true) aufgerufen werden - siehe
+# docs/entscheidungen.md / Gespraechsverlauf zur P2-Verifikation.
+# Sobald die echte Ansteuerung existiert, kann dieser Hinweis entfallen.
+name: Tastschutz aktiv - Weiterleitung muss gesperrt bleiben
+version: 1
+author: ESP-BMC
+
+steps:
+  - wait-serial: "Tastschutz: AKTIV"
+  - set-control:
+      part-id: btn-power-sense
+      control: pressed
+      value: 1
+  - delay: 200ms
+  # Bei aktivem Tastschutz muss erfasst=1 UND weitergeleitet=0 gleichzeitig
+  # gelten (Erfassung funktioniert weiter, Weiterleitung bleibt gesperrt).
+  - wait-serial: "erfasst=1 weitergeleitet=0"
+  - set-control:
+      part-id: btn-power-sense
+      control: pressed
+      value: 0

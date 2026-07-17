@@ -1,0 +1,46 @@
+menu "ESP-BMC: WireGuardManager (P1 Machbarkeits-Spike)"
+
+    config ESP_BMC_WG_ENABLE
+        bool "WireGuard-Tunnel beim Start aufbauen"
+        default n
+        help
+            Standardmaessig aus, da die Platzhalter-Konfiguration unten nicht
+            auf einen echten Peer zeigt. Erst aktivieren, wenn eine echte
+            WireGuard-Konfiguration eingetragen wurde (siehe Pflichtenheft
+            Abschnitt 4.1 - Ablage spaeter ueber LittleFS/Webinterface-Upload,
+            hier vorerst nur Kconfig-Platzhalter fuer den Machbarkeits-Spike).
+
+    config ESP_BMC_WG_PRIVATE_KEY
+        string "Eigener privater Schluessel (Base64)"
+        default "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        help
+            Platzhalter (32 Null-Bytes, syntaktisch gueltiges Base64) - KEIN
+            echter Schluessel. Vor einem echten Verbindungsversuch ersetzen.
+
+    config ESP_BMC_WG_LOCAL_IP
+        string "Eigene Tunnel-IP"
+        default "10.0.0.2"
+
+    config ESP_BMC_WG_LOCAL_IP_NETMASK
+        string "Tunnel-Netzmaske"
+        default "255.255.255.0"
+
+    config ESP_BMC_WG_LOCAL_PORT
+        int "Lokaler WireGuard-UDP-Port"
+        default 51820
+
+    config ESP_BMC_WG_PEER_PUBLIC_KEY
+        string "Oeffentlicher Schluessel des Peers (Base64)"
+        default "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        help
+            Platzhalter, siehe ESP_BMC_WG_PRIVATE_KEY.
+
+    config ESP_BMC_WG_PEER_ENDPOINT
+        string "Adresse/Hostname des Peers"
+        default "CHANGE_ME.example.invalid"
+
+    config ESP_BMC_WG_PEER_PORT
+        int "UDP-Port des Peers"
+        default 51820
+
+endmenu
