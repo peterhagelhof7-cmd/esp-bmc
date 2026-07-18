@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>ESP-BMC — Admin-Guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #1c2430;
+    background: #ffffff;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .cover {
+    background: #1e2530;
+    color: #fff;
+    margin: -18mm -16mm 12mm -16mm;
+    padding: 30mm 16mm 16mm 16mm;
+  }
+  .cover .eyebrow { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: #d9a06c; margin-bottom: 6mm; }
+  .cover h1 { margin: 0 0 4mm 0; font-size: 30px; }
+  .cover .subtitle { color: #cdd3de; font-size: 13px; max-width: 130mm; }
+  .cover .badges { margin-top: 8mm; display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 3px; font-size: 10px; font-weight: 600; background: #313a46; color: #cdd3de; }
+  .badge-orange { background: #b5622a; color: #fff; }
+
+  h1.section { font-size: 18px; color: #1e2530; border-bottom: 2px solid #b5622a; padding-bottom: 2mm; margin: 14mm 0 5mm 0; page-break-after: avoid; break-after: avoid; }
+  h1.section .num { color: #b5622a; margin-right: 2mm; }
+  h2 { font-size: 13.5px; color: #8f4a1e; margin: 6mm 0 2mm 0; page-break-after: avoid; break-after: avoid; }
+  h3 { font-size: 12px; color: #1c2430; margin: 4mm 0 1.5mm 0; page-break-after: avoid; break-after: avoid; }
+  p { margin: 0 0 3mm 0; }
+  ul, ol { margin: 0 0 3mm 0; padding-left: 5mm; }
+  li { margin-bottom: 1.2mm; }
+  code, .code {
+    font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+    background: #f2f0e9;
+    border: 1px solid #e4e1d8;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 11px;
+    word-break: break-all;
+  }
+  pre.code-block {
+    font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+    background: #f2f0e9;
+    color: #1c2430;
+    border: 1px solid #c7c2b4;
+    border-left: 3px solid #8f4a1e;
+    border-radius: 0 4px 4px 0;
+    padding: 3mm 4mm;
+    font-size: 11px;
+    line-height: 1.6;
+    margin: 2mm 0 4mm 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .callout {
+    border-left: 3px solid #b5622a;
+    background: #fbf3ee;
+    padding: 3mm 4mm;
+    margin: 3mm 0;
+    border-radius: 0 3px 3px 0;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .callout.warn { border-left-color: #a63d2e; background: #fbeeec; }
+  .callout.warn .callout-title { color: #a63d2e; }
+  .callout.good { border-left-color: #3f6e63; background: #eef5f3; }
+  .callout.good .callout-title { color: #3f6e63; }
+  .callout-title { font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #8f4a1e; margin-bottom: 1mm; }
+  table { border-collapse: collapse; width: 100%; margin: 2mm 0 4mm 0; page-break-inside: avoid; break-inside: avoid; }
+  table th, table td { border: 1px solid #e4e1d8; padding: 1.5mm 2.5mm; font-size: 11px; text-align: left; vertical-align: top; }
+  table th { background: #f2f0e9; }
+
+  .keep { page-break-inside: avoid; break-inside: avoid; }
+
+  .port-row { display: flex; gap: 6mm; align-items: stretch; margin: 3mm 0 5mm 0; page-break-inside: avoid; break-inside: avoid; }
+  .port-box { flex: 1; border: 1px solid #e4e1d8; border-radius: 3mm; padding: 4mm; }
+  .port-box .port-icon { width: 14mm; height: 8mm; border: 1.2mm solid; border-radius: 2mm; margin-bottom: 3mm; }
+  .port-box.a .port-icon { border-color: #3b5b8c; background: #eaeff7; }
+  .port-box.b .port-icon { border-color: #b5622a; background: #f7ede4; }
+  .port-box b { display: block; font-size: 12px; margin-bottom: 1mm; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="eyebrow">Firmware-Projekt · Hobby / Privat</div>
+  <h1>ESP-BMC</h1>
+  <div class="subtitle">Admin-Guide — Fernsteuerung, Überwachung und Konfiguration eines PCs per ESP32-S3, ohne dessen eigenes Betriebssystem</div>
+  <div class="badges">
+    <span class="badge badge-orange">v0.9.0-rc4 · erste Beta</span>
+    <span class="badge">ESP32-S3 DevKitC-1 N16R8 / N8R8</span>
+    <span class="badge">Web · SSH · USB · SNMP · Syslog/SMTP · WireGuard-VPN · OTA</span>
+  </div>
+</div>
+
+<div class="toc">
+  <div class="toc-row"><a href="#sec1">1. Erste Inbetriebnahme</a></div>
+  <div class="toc-row"><a href="#sec2">2. Ersteinrichtung per USB (Setup-Skript)</a></div>
+  <div class="toc-row"><a href="#sec3">3. Watchdog-LED</a></div>
+  <div class="toc-row"><a href="#sec4">4. Weboberfläche — Zugriff &amp; Übersicht</a></div>
+  <div class="toc-row"><a href="#sec5">5. Einstellungen im Detail</a></div>
+  <div class="toc-row"><a href="#sec6">6. SSH-Zugang</a></div>
+  <div class="toc-row"><a href="#sec7">7. Firmware-Updates (OTA)</a></div>
+  <div class="toc-row"><a href="#sec8">8. SNMP &amp; Zabbix</a></div>
+  <div class="toc-row"><a href="#sec9">9. USB-Kommandozeile</a></div>
+  <div class="toc-row"><a href="#sec10">10. Verdrahtung (Kurzreferenz)</a></div>
+  <div class="toc-row"><a href="#sec-anhang">Anhang: Troubleshooting</a></div>
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec1"><span class="num">1</span>Erste Inbetriebnahme</h1>
+
+<h2>1.1 Hardware-Übersicht</h2>
+<p>Kern des Geräts ist ein <b>ESP32-S3 DevKitC-1</b> (Standard-44-Pin-
+Footprint, zwei gepflegte Varianten: <b>N16R8</b> mit 16&nbsp;MB Flash oder
+<b>N8R8</b> mit 8&nbsp;MB Flash — bei beiden identisches 8&nbsp;MB Octal-PSRAM,
+nur die Flash-Größe unterscheidet sich). Dazu kommt eine kleine
+Zusatzbeschaltung am Mainboard-Header des zu steuernden PCs (Power-/
+Reset-Taster-Weiterleitung, LED-Erfassung, siehe Abschnitt 10) sowie zwei
+optionale Sensoren (NTC-Temperaturfühler, DHT11).</p>
+
+<div class="port-row">
+  <div class="port-box a">
+    <div class="port-icon"></div>
+    <b>Port A — Flash/Debug</b>
+    USB-UART-Bridge-Chip, für <span class="code">pio run -t upload</span>,
+    <span class="code">esptool.py</span> und das Setup-Skript (Abschnitt 2).
+    Erscheint am PC als klassischer COM-Port.
+  </div>
+  <div class="port-box b">
+    <div class="port-icon"></div>
+    <b>Port B — natives USB</b>
+    ESP32-S3-eigener USB-Controller. Wird von der Firmware selbst NICHT für
+    die Ersteinrichtung genutzt (das läuft über Port A) — reserviert für
+    eine spätere CDC/HID-Weiterleitung an den verwalteten PC.
+  </div>
+</div>
+<div class="callout">
+  <div class="callout-title">Zuordnung nur mit mittlerem Vertrauen bestimmt</div>
+  Welcher der beiden baugleichen USB-C-Anschlüsse physisch Port A bzw. B
+  ist, wurde aus Fotos (Lage des Bridge-Chips) hergeleitet, nicht an
+  echter Hardware nachgemessen — siehe
+  <span class="code">docs/verdrahtungsplan.html</span> Abschnitt 1 für den
+  vollständigen Befund. Im Zweifel: beide Ports der Reihe nach probieren,
+  Windows zeigt beim Anstecken von Port A einen neuen COM-Port im
+  Geräte-Manager.
+</div>
+
+<h2>1.2 Anschließen an den Computer</h2>
+<p>Das Board per USB-C-Kabel an <b>Port A</b> mit einem Windows-Rechner
+verbinden. Windows sollte automatisch einen neuen COM-Port erkennen —
+falls nicht, fehlt vermutlich der passende USB-Seriell-Treiber für den
+verbauten Bridge-Chip. Im Geräte-Manager unter „Anschlüsse (COM &amp;
+LPT)" prüfen, ob ein neuer Port (z.&nbsp;B. <span class="code">COM7</span>)
+erscheint.</p>
+
+<h2>1.3 Setup-Skript ausführen</h2>
+<p><span class="code">tools/Setup.ps1</span> übernimmt die komplette
+Ersteinrichtung in einem Durchlauf: Firmware flashen, Konfigurationsvorlage
+bearbeiten und anwenden, optional eine WireGuard-Konfiguration importieren,
+optional WLAN einrichten. Details zum Ablauf: Abschnitt 2.</p>
+<pre class="code-block">cd tools
+.\Setup.ps1</pre>
+<table>
+  <tr><th>Parameter</th><th>Wirkung</th></tr>
+  <tr><td><span class="code">-Port COM7</span></td><td>Seriellen Port fest vorgeben, falls mehrere Boards angeschlossen sind oder die Auswahl übersprungen werden soll</td></tr>
+  <tr><td><span class="code">-SkipFlash</span></td><td>Nur die Konfiguration anwenden, keine neue Firmware flashen — z.&nbsp;B. bei einem bereits geflashten Gerät</td></tr>
+  <tr><td><span class="code">-EnvName &lt;env&gt;</span></td><td>PlatformIO-Umgebung fest vorgeben (<span class="code">esp32-s3-devkitc-1-n16r8</span>/<span class="code">-n8r8</span>) — normalerweise nicht nötig, siehe Callout unten</td></tr>
+  <tr><td><span class="code">-Username</span> / <span class="code">-Password</span></td><td>Abweichende Login-Daten für den Erstkontakt per USB (Default: <span class="code">admin</span>/<span class="code">admin</span>)</td></tr>
+</table>
+
+<div class="callout good">
+  <div class="callout-title">Automatische Varianten-Erkennung</div>
+  Vor dem Flashen fragt das Skript per <span class="code">esptool.py
+  flash_id</span> die tatsächlich verbaute Flash-Größe des angeschlossenen
+  Chips ab und wählt automatisch die passende Umgebung
+  (<span class="code">n16r8</span> vs. <span class="code">n8r8</span>) —
+  ein falscher <span class="code">-EnvName</span> könnte sonst zu einem
+  nicht bootenden Gerät führen (Firmware für die falsche Flash-Größe
+  gebaut). Wird <span class="code">-EnvName</span> explizit angegeben,
+  wird das respektiert und nur bei einer Abweichung gewarnt, nicht
+  überschrieben. Schlägt die Erkennung fehl (kein Gerät verbunden), wird
+  nur gewarnt und mit dem Standardwert fortgefahren.</div>
+
+<h2>1.4 Flashen</h2>
+<p>Das Skript fragt zu Beginn, ob geflasht werden soll (Default: Ja) und
+ruft dafür intern <span class="code">pio run -t upload</span> auf.</p>
+<div class="callout warn">
+  <div class="callout-title">Erster Boot nach dem Flashen dauert länger</div>
+  Beim allerersten Start (bzw. nach jedem Löschen der
+  <span class="code">storage</span>-Partition) formatiert das Gerät
+  einmalig sein Dateisystem und erzeugt einen neuen SSH-Host-Schlüssel —
+  das dauert spürbar länger als jeder folgende Boot. Das Skript weist
+  darauf hin und wartet mit mehreren Verbindungsversuchen (statt sofort
+  mit einem Fehler abzubrechen), falls der erste Kontaktversuch zu früh
+  kommt.
+</div>
+<div class="callout warn">
+  <div class="callout-title">Bei Fehlschlag</div>
+  Häufigste Ursachen: USB-Seriell-Treiber fehlt, falscher COM-Port
+  (<span class="code">-Port COM&lt;n&gt;</span> erneut versuchen), oder das
+  Board ist nicht an Port A angeschlossen (Abschnitt 1.1).
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec2"><span class="num">2</span>Ersteinrichtung per USB (Setup-Skript)</h1>
+<p>Nach dem Flashen (oder direkt mit <span class="code">-SkipFlash</span>)
+führt <span class="code">Setup.ps1</span> durch vier weitere Schritte, alle
+über die USB-Kommandoschnittstelle (Abschnitt 9) — zu diesem Zeitpunkt
+existiert noch kein Netzwerkzugriff, deshalb läuft die komplette
+Ersteinrichtung bewusst über USB, nicht über die Weboberfläche.</p>
+
+<h2>2.1 Konfigurationsvorlage bearbeiten</h2>
+<p>Das Skript öffnet <span class="code">tools/config_template.txt</span>
+(bzw. eine Kopie davon) im Standard-Editor. Nach dem Speichern und
+Schließen werden die eingetragenen Werte per USB-Kommandos angewendet
+(<span class="code">system set</span>, <span class="code">snmp set</span>,
+<span class="code">thresholds set</span>,
+<span class="code">tastschutz set</span> — siehe Abschnitt 9.1).</p>
+<table>
+  <tr><th>Feld in der Vorlage</th><th>Bedeutung</th></tr>
+  <tr><td><span class="code">system_name</span></td><td>Frei wählbarer Anzeigename (z.&nbsp;B. „Buero-PC")</td></tr>
+  <tr><td><span class="code">snmp_community</span> / <span class="code">snmp_rw_community</span></td><td>SNMP-Lese-/Schreib-Community (Abschnitt 8)</td></tr>
+  <tr><td><span class="code">ntc_temp_max_c</span> / <span class="code">dht_temp_max_c</span> / <span class="code">dht_humidity_max_pct</span></td><td>Schwellwerte für Benachrichtigungen (Dezimaltrennzeichen: Punkt, nicht Komma)</td></tr>
+  <tr><td><span class="code">tastschutz</span></td><td><span class="code">1</span> = Tasten-Weiterleitung gesperrt, <span class="code">0</span> = aktiv</td></tr>
+</table>
+
+<h2>2.2 WireGuard-Konfiguration importieren (optional)</h2>
+<p>Findet das Skript eine <span class="code">.conf</span>-Datei im
+aktuellen Ordner, bietet es an, sie hochzuladen (USB-Kommando
+<span class="code">wg upload</span>) — die im Interface-Block enthaltene
+Standardroute (<span class="code">0.0.0.0/0</span>) wird dabei automatisch
+entfernt, damit der restliche Netzwerkverkehr des Geräts nicht über den
+Tunnel läuft.</p>
+
+<h2>2.3 WLAN einrichten (optional)</h2>
+<p>Auf Wunsch führt das Skript einen WLAN-Scan durch
+(<span class="code">wlan scan</span>), zeigt erreichbare Netze mit
+Signalstärke an und verbindet nach Auswahl mit dem eingegebenen Passwort
+(<span class="code">wlan join</span>). Nach erfolgreichem Verbindungsaufbau
+zeigt der abschließende Statusabruf die vom Router zugewiesene IP-Adresse
+— ab hier ist das Gerät auch über die Weboberfläche erreichbar (Abschnitt
+4).</p>
+<div class="callout">
+  <div class="callout-title">Kein WLAN eingerichtet?</div>
+  Das Gerät hat keinen eigenen Access-Point-Fallback-Modus — ohne
+  WLAN-Zugangsdaten bleibt es ausschließlich über USB erreichbar. Die
+  Ersteinrichtung lässt sich jederzeit erneut mit
+  <span class="code">.\Setup.ps1 -SkipFlash</span> nachholen.
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec3"><span class="num">3</span>Watchdog-LED</h1>
+<p>Direkt auf dem Modul verbaut, keine externe Verdrahtung: eine einzelne
+adressierbare RGB-LED (WS2812, GPIO48).</p>
+<ul>
+  <li><b>Sanfter, durchlaufender Farbverlauf</b> (voller Umlauf ca. alle
+  7 Sekunden) — läuft schon vor dem eigentlichen Boot-Abschluss an
+  (unmittelbar nach dem Einschalten, noch während einer eventuellen
+  Erststart-Formatierung, siehe Abschnitt 1.4) und zeigt an: die
+  FreeRTOS-Firmware läuft, der Scheduler ist nicht durch eine hängende
+  Task blockiert.</li>
+  <li><b>Farbverlauf bleibt stehen / Gerät bleibt dunkel</b> — deutet auf
+  ein echtes Problem hin. Die Firmware ist zusätzlich beim
+  ESP-IDF-eigenen Task-Watchdog angemeldet: hängt eine Task tatsächlich,
+  startet das Gerät nach kurzer Zeit automatisch neu (kein manuelles
+  Eingreifen nötig).</li>
+</ul>
+<div class="callout">
+  <div class="callout-title">Kein Statuscode, keine Fehlerdiagnose über die LED</div>
+  Die Farbe selbst trägt keine Bedeutung (reiner Regenbogen-Verlauf) — für
+  eine echte Diagnose bei einem hängenden/neu startenden Gerät die
+  serielle Konsole an Port A verwenden (Boot-Log) oder das Audit-Log
+  (Abschnitt 4.3) nach dem Neustart prüfen.
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec4"><span class="num">4</span>Weboberfläche — Zugriff &amp; Übersicht</h1>
+
+<h2>4.1 Zugriff</h2>
+<ol>
+  <li>IP-Adresse des Geräts ermitteln — per USB-Kommando
+  <span class="code">status</span> (Abschnitt 9) oder über die
+  DHCP-Geräteliste des Routers</li>
+  <li>Im Browser eines Geräts im selben Netzwerk aufrufen:
+  <span class="code">http://&lt;IP-Adresse&gt;/</span></li>
+  <li>Ohne aktive Sitzung leitet das Gerät auf eine eigene Login-Seite
+  weiter (Formular, kein HTTP-Basic-Auth-Dialog)</li>
+</ol>
+<div class="callout warn">
+  <div class="callout-title">Standard-Zugangsdaten — dringend ändern!</div>
+  <table style="margin:2mm 0;">
+    <tr><th>Benutzername</th><td><span class="code">admin</span></td></tr>
+    <tr><th>Passwort</th><td><span class="code">admin</span> (Werkseinstellung)</td></tr>
+  </table>
+  Neues Passwort über „Benutzerverwaltung" (Abschnitt 5) setzen — dafür
+  ein neues Admin-Konto anlegen und das Standardkonto anschließend löschen
+  (kein direktes „Passwort ändern"-Feld für das eigene Konto in dieser
+  Ausbaustufe).
+</div>
+
+<h2>4.2 Rollen</h2>
+<table>
+  <tr><th>Rolle</th><th>Rechte</th></tr>
+  <tr><td>Leser</td><td>Nur Log-/Sensorwerte-Ansicht und -Download</td></tr>
+  <tr><td>SSH User</td><td>Wie Leser, zusätzlich Webconsole und eigenen SSH-Key hinterlegen (Abschnitt 6)</td></tr>
+  <tr><td>Verwalter</td><td>Alle Einstellungen; Taster-Steuerung nur mit erneuter Passwort-Bestätigung</td></tr>
+  <tr><td>Admin</td><td>Wie Verwalter, zusätzlich Taster-Steuerung ohne erneute Bestätigung, Benutzerverwaltung, Firmware-Update (Abschnitt 7)</td></tr>
+</table>
+
+<h2>4.3 Übersichtsseite (nach Login)</h2>
+<p>Zeigt Netzwerkstatus (WLAN-IP, VPN-Status/-IP), Sensorwerte (NTC-/DHT11-
+Temperatur, Luftfeuchte) inkl. 24-Stunden-Verlaufsgraph, Systemwerte
+(Uptime, Power-/HDD-LED-Status). Zusätzlich mehrere Selbstbedienungs-
+Karten:</p>
+<ul>
+  <li><b>Webconsole</b> — interaktive serielle Konsole im Browser
+  (WebSocket)</li>
+  <li><b>SSH-Zugang</b> — eigenen Public-Key hinterlegen (nur SSH-User-
+  Rolle und höher, siehe Abschnitt 6)</li>
+  <li><b>SSH-Host-Key</b> — Fingerprint und vollständige Public-Key-Zeile
+  zur Prüfung vor dem allerersten SSH-Connect (nicht vertraulich, für
+  jede Rolle sichtbar, siehe Abschnitt 6)</li>
+  <li><b>E-Mail-Benachrichtigung</b> — eigene Adresse + Aktiv-Schalter
+  (jede Rolle, siehe Abschnitt 5)</li>
+</ul>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec5"><span class="num">5</span>Einstellungen im Detail</h1>
+<p>Erreichbar über „Zur Einstellungen-Seite" auf der Übersichtsseite,
+mindestens Rolle Verwalter.</p>
+
+<h3>IP-Konfiguration (WLAN)</h3>
+<p>DHCP oder statische IP. Vor dem Übernehmen einer statischen IP prüft
+das Gerät per Ping, ob die Adresse im Netz bereits belegt ist — bei einem
+Treffer wird nichts übernommen.</p>
+
+<h3>WLAN-Scan</h3>
+<p>Listet erreichbare Netze mit Verschlüsselungsstatus und Signalstärke.</p>
+
+<h3>WireGuard-VPN</h3>
+<p>Komplette <span class="code">wireguard.conf</span> in ein Textfeld
+einfügen (kein Datei-Upload-Dialog — eine wenige hundert Byte große Datei
+passt bequem als Formularfeld). Eine enthaltene Standardroute wird
+automatisch entfernt (wie beim USB-Import, Abschnitt 2.2). Eigener Button
+zum Löschen der Konfiguration.</p>
+
+<h3>Benutzerverwaltung</h3>
+<p>Neue Konten anlegen (Benutzername ohne Sonderzeichen, Passwort
+mindestens 8 Zeichen mit mindestens 2 von 3 Zeichenklassen
+Groß-/Kleinbuchstaben/Ziffern), Rolle auswählen.</p>
+
+<h3>SNMP</h3>
+<p>Lese-Community (GET/GETNEXT auf alle Objekte) und separate
+Schreib-Community (nur für die per SET schreibbaren Objekte
+powerKey/resetKey) — siehe Abschnitt 8.</p>
+
+<h3>Benachrichtigungen</h3>
+<p>Zwei unabhängige Wege bei Schwellwert-Überschreitung:</p>
+<table>
+  <tr><th>Feld</th><th>Bedeutung</th></tr>
+  <tr><td>Syslog-Server / -Port</td><td>UDP-Ziel für Syslog-Meldungen. Leer = deaktiviert. Standard-Port: 514.</td></tr>
+  <tr><td>SMTP-Server / -Port</td><td>Mail-Relay, bewusst <b>ohne TLS</b> (siehe Callout) — nur für ein vertrauenswürdiges internes Netz gedacht.</td></tr>
+  <tr><td>Absender-Adresse</td><td>Erscheint als Absender jeder gesendeten Mail.</td></tr>
+  <tr><td>Benutzername / Passwort</td><td>Nur nötig, falls das Relay eine Anmeldung verlangt (leer = keine Authentifizierung). Ein leeres Passwortfeld beim Speichern bedeutet „unverändert lassen".</td></tr>
+</table>
+<div class="callout warn">
+  <div class="callout-title">Kein TLS</div>
+  Absender/Zugangsdaten werden unverschlüsselt übertragen — nur mit einem
+  Mail-Relay im selben vertrauenswürdigen Netz verwenden, nicht mit
+  öffentlichen Anbietern (Gmail/Outlook u.&nbsp;ä. erzwingen ohnehin TLS und
+  würden die Verbindung ablehnen).
+</div>
+<p>Empfänger verwaltet jeder Nutzer selbst auf der Übersichtsseite
+(Abschnitt 4.3) — bei einer Häufung von Meldungen (ab der fünften Mail
+innerhalb der ersten 50 Minuten eines Stunden-Fensters) sammelt das Gerät
+weitere Meldungen und verschickt spätestens in Minute 59 eine einzelne
+Sammel-Mail statt jede einzeln — schützt vor dem Mails-pro-Stunde-Limit
+vieler Mailserver. Alle aktivierten Empfänger stehen dabei gemeinsam im
+Cc einer einzigen Mail.</p>
+
+<h3>Taster-Steuerung</h3>
+<p>Power (kurz/lang) und Reset direkt auslösen. Verwalter muss dafür das
+eigene Passwort erneut eingeben, Admin nicht.</p>
+
+<h3>Tastschutz</h3>
+<p>Sperrt die Weiterleitung von Tastendrücken an den Mainboard-Header
+(physischer Taster, Web, USB und SNMP gleichermaßen betroffen).</p>
+
+<h3>Gehäuse-LEDs</h3>
+<p>Power-/HDD-LED-Ausgänge des Geräts einzeln ein-/ausschalten.</p>
+
+<h3>Firmware</h3>
+<p>Siehe Abschnitt 7.</p>
+
+<h3>System</h3>
+<p>Systemname (frei wählbar) und die laufende Firmware-Version
+(Anzeige, nicht editierbar). Geräte-<i>typ</i> ist fest „ESP-BMC".</p>
+
+<h3>Reboot / Reset</h3>
+<p>Sofortiger Neustart, oder Zurücksetzen auf Werkseinstellungen — wahlweise
+nur Einstellungen (WLAN/VPN/Benutzer/Schwellwerte/Benachrichtigungswege)
+oder zusätzlich die 24-Stunden-Sensor-Historie. Das Audit-Log selbst wird
+von keinem Reset-Umfang gelöscht.</p>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec6"><span class="num">6</span>SSH-Zugang</h1>
+<p>Eigener SSH-Server auf Port 22 (kein Pass-Through zu einer sshd auf dem
+verwalteten PC) — Anmeldung direkt am Gerät, dieselbe Kontodatenbank wie
+Web/USB, Mindestrolle „SSH User".</p>
+<ul>
+  <li><b>Passwort</b> — Benutzername/Passwort wie beim Web-Login</li>
+  <li><b>Public-Key</b> — nur ECDSA/Ed25519, <b>kein RSA</b>. Eigenen
+  Schlüssel über die Übersichtsseite hinterlegen (Abschnitt 4.3), Format:
+  eine normale <span class="code">authorized_keys</span>-Zeile
+  (<span class="code">ecdsa-sha2-nistp256 AAAA...</span> oder
+  <span class="code">ssh-ed25519 AAAA...</span>)</li>
+</ul>
+<div class="callout good">
+  <div class="callout-title">Host-Key vor dem ersten Connect prüfen</div>
+  Fingerprint und vollständige Public-Key-Zeile stehen unverschlüsselt auf
+  der Übersichtsseite (Abschnitt 4.3, für jede Rolle sichtbar — der
+  Host-Key ist nicht vertraulich, er wird bei jedem Handshake ohnehin an
+  den Client übertragen). Vor dem allerersten
+  <span class="code">ssh</span>-Aufruf mit dem angezeigten Fingerprint
+  vergleichen, um eine Man-in-the-Middle-Warnung sicher bestätigen zu
+  können.
+</div>
+<p>Genau eine gleichzeitige Sitzung — SSH und die Webconsole (Abschnitt
+4.3) teilen sich denselben seriellen Kanal zum verwalteten PC, ein zweiter
+Verbindungsversuch während einer aktiven Sitzung wird abgelehnt.</p>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec7"><span class="num">7</span>Firmware-Updates (OTA)</h1>
+<p>Lokaler <span class="code">.bin</span>-Upload über die Einstellungen-
+Seite (Abschnitt 5), <b>nur Rolle Admin</b>.</p>
+<ol>
+  <li>Neue <span class="code">.bin</span>-Datei besorgen (aus dem eigenen
+  Build, <span class="code">.pio/build/&lt;env&gt;/firmware.bin</span>)</li>
+  <li>Im Bereich „Firmware-Update (OTA)" die Datei auswählen und
+  „Hochladen &amp; aktualisieren" klicken</li>
+  <li>Nach erfolgreichem Upload startet das Gerät automatisch neu</li>
+</ol>
+<div class="callout">
+  <div class="callout-title">Identitäts- und Downgrade-Prüfung</div>
+  Jede Firmware-Datei enthält ein eingebautes Erkennungsmerkmal
+  (Projekt-ID + Version). Der Upload wird abgelehnt, wenn die Datei von
+  einem anderen Projekt stammt, oder wenn ihre Version älter ist als die
+  laufende — letzteres lässt sich über das zweite Formular
+  („Hochladen (Downgrade erzwingen)") bewusst umgehen. Kein
+  kryptografischer Schutz, nur eine Plausibilitätsprüfung gegen
+  Verwechslungen.
+</div>
+<div class="callout good">
+  <div class="callout-title">Automatischer Rollback bei Fehlschlag</div>
+  Startet die neu geflashte Firmware nicht sauber durch (Absturz, Hänger),
+  kehrt das Gerät beim nächsten Bootversuch automatisch zur vorherigen,
+  funktionierenden Version zurück — kein Risiko eines dauerhaft
+  unerreichbaren Geräts durch eine fehlerhafte .bin.
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec8"><span class="num">8</span>SNMP &amp; Zabbix</h1>
+
+<h2>8.1 SNMP (v1/v2c, Port 161)</h2>
+<p>Eigene private Enterprise-MIB unter
+<span class="code">1.3.6.1.4.1.99999.10</span> (kein Standard-MIB-2).
+GET und GETNEXT für alle Objekte, SET nur für
+<span class="code">powerKey</span>/<span class="code">resetKey</span> mit
+der separaten Schreib-Community (Abschnitt 5). Kein GetBulk — im
+Zabbix-Host-Interface „Use bulk requests" deaktivieren.</p>
+<table>
+  <tr><th>OID (…99999.10.X.0)</th><th>Bedeutung</th></tr>
+  <tr><td>.1</td><td>Systemname</td></tr>
+  <tr><td>.2</td><td>Uptime (TimeTicks)</td></tr>
+  <tr><td>.3</td><td>WLAN-IP</td></tr>
+  <tr><td>.4</td><td>WLAN-SSID</td></tr>
+  <tr><td>.5</td><td>VPN-Status (0/1)</td></tr>
+  <tr><td>.6</td><td>VPN-Tunnel-IP</td></tr>
+  <tr><td>.7</td><td>NTC-Temperatur (°C ×10)</td></tr>
+  <tr><td>.8</td><td>DHT11-Temperatur (°C ×10)</td></tr>
+  <tr><td>.9</td><td>DHT11-Luftfeuchte (% ×10)</td></tr>
+  <tr><td>.10</td><td>Power-LED-Status (0/1)</td></tr>
+  <tr><td>.11</td><td>HDD-LED-Aktivität, letzte 10s (0/1)</td></tr>
+  <tr><td>.12</td><td>Freier Heap (Bytes)</td></tr>
+  <tr><td>.13</td><td>WLAN statische IP aktiv (0/1)</td></tr>
+  <tr><td>.14</td><td>Systemtyp (fest „ESP-BMC")</td></tr>
+  <tr><td>.15</td><td>Power-Taste weitergeleitet (0/1) — GET+SET</td></tr>
+  <tr><td>.16</td><td>Reset-Taste weitergeleitet (0/1) — GET+SET</td></tr>
+  <tr><td>.17</td><td>Firmware-Version</td></tr>
+</table>
+<div class="callout">
+  <div class="callout-title">Sentinel-Wert bei fehlendem Sensor</div>
+  Liefert ein Sensor keinen gültigen Messwert, antworten .7/.8/.9 mit dem
+  Sentinel-Wert <span class="code">-32768</span> (also -3276.8 nach der
+  ×0.1-Umrechnung in Zabbix) — im Dashboard als offensichtlicher
+  Ausreißer erkennbar.
+</div>
+<pre class="code-block">snmpget -v2c -c public &lt;IP-Adresse&gt; .1.3.6.1.4.1.99999.10.17.0</pre>
+
+<h2>8.2 Zabbix-Template</h2>
+<p><span class="code">docs/zabbix-template-esp-bmc.yaml</span> — alle 17
+Objekte als Items, Makros für Community + Schwellwerte, Trigger für
+Übertemperatur/-feuchte, niedrigen freien Heap, VPN-Tunnel-Ausfall und
+fehlende SNMP-Daten.</p>
+<ol>
+  <li>Template importieren, neuen Host anlegen, Template zuweisen</li>
+  <li>SNMP-Interface des Hosts auf die Geräte-IP setzen, Port 161</li>
+  <li>Host-Makro <span class="code">{$SNMP_COMMUNITY}</span> anpassen,
+  falls von „public" abweichend</li>
+  <li>Schwellwert-Makros (<span class="code">{$NTC_TEMP_MAX_C}</span>
+  usw.) an die auf dem Gerät konfigurierten Werte anpassen (Abschnitt 5)</li>
+</ol>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec9"><span class="num">9</span>USB-Kommandozeile</h1>
+<p>Dasselbe USB-Kabel, das auch zum Flashen dient (Port A), trägt
+zusätzlich ein einfaches Zeilen-Kommandoprotokoll — praktisch, wenn das
+Gerät (noch) nicht im Netzwerk erreichbar ist. Jede Zeile beginnt mit
+<span class="code">##ESPR </span>, Antworten mit
+<span class="code">##ESPR OK</span>/<span class="code">##ESPR ERR
+&lt;grund&gt;</span>, abgeschlossen durch eine Zeile
+<span class="code">##ESPR END</span>. Vor allen anderen Kommandos ist
+<span class="code">login &lt;benutzer&gt; &lt;passwort&gt;</span> nötig
+(dieselbe Kontodatenbank wie Web/SSH) — eine globale Sitzung, kein
+Login je Kommando.</p>
+
+<h2>9.1 Kommandoübersicht</h2>
+<table>
+  <tr><th>Kommando</th><th>Wirkung</th></tr>
+  <tr><td><span class="code">login &lt;user&gt; &lt;pass&gt;</span></td><td>Anmelden, liefert die Rolle des Kontos</td></tr>
+  <tr><td><span class="code">logout</span></td><td>Abmelden</td></tr>
+  <tr><td><span class="code">status</span></td><td>Aktuellen Zustand ausgeben (IP, VPN, Sensorwerte, Taster-/LED-Status)</td></tr>
+  <tr><td><span class="code">storage</span></td><td>Belegung der storage-Partition</td></tr>
+  <tr><td><span class="code">log audit</span> / <span class="code">log sensors</span></td><td>Audit-Log bzw. Sensor-CSV ausgeben</td></tr>
+  <tr><td><span class="code">config download</span></td><td>Gesamtkonfiguration als JSON ausgeben (kein Upload-Gegenstück vorhanden)</td></tr>
+  <tr><td><span class="code">reboot</span></td><td>Sofortiger Neustart</td></tr>
+  <tr><td><span class="code">reset settings</span> / <span class="code">reset settings_values</span></td><td>Werksreset wie auf der Weboberfläche (Abschnitt 5)</td></tr>
+  <tr><td><span class="code">taster power_push|power_hold|reset [passwort]</span></td><td>Taster auslösen — Passwort nur bei Rolle Verwalter nötig</td></tr>
+  <tr><td><span class="code">system set &lt;name&gt;</span></td><td>Systemname setzen</td></tr>
+  <tr><td><span class="code">snmp set &lt;ro&gt; &lt;rw&gt;</span></td><td>SNMP-Communities setzen</td></tr>
+  <tr><td><span class="code">thresholds set &lt;ntc&gt; &lt;dht&gt; &lt;hum&gt;</span></td><td>Schwellwerte setzen (Dezimalpunkt, kein Komma)</td></tr>
+  <tr><td><span class="code">tastschutz set 0|1</span></td><td>Tastschutz setzen</td></tr>
+  <tr><td><span class="code">led set power|hdd 0|1</span></td><td>Gehäuse-LED-Ausgang setzen</td></tr>
+  <tr><td><span class="code">wg upload &lt;länge&gt;</span> / <span class="code">wg delete</span></td><td>WireGuard-Konfiguration hochladen (Rohbytes im Anschluss) bzw. löschen</td></tr>
+  <tr><td><span class="code">wlan scan</span> / <span class="code">wlan join &lt;index&gt; [psk]</span></td><td>WLAN-Netze suchen bzw. verbinden</td></tr>
+</table>
+
+<h2>9.2 Nutzung mit Windows-Boardmitteln</h2>
+<p><span class="code">tools/EspBmcLink.psm1</span> kapselt das Protokoll
+bereits vollständig (von <span class="code">Setup.ps1</span> genutzt,
+Abschnitt 2) — für eigene Skripte reicht ein
+<span class="code">Import-Module .\EspBmcLink.psm1</span>. Für einen
+schnellen manuellen Test ohne Zusatzsoftware reicht auch
+PowerShells eigene <span class="code">System.IO.Ports.SerialPort</span>-
+Klasse:</p>
+<pre class="code-block">$port = New-Object System.IO.Ports.SerialPort "COM7", 115200
+$port.NewLine = "`r`n"
+$port.Open(); Start-Sleep -Milliseconds 300
+$port.DiscardInBuffer()
+$port.WriteLine("##ESPR login admin admin")
+Start-Sleep -Milliseconds 300
+$port.WriteLine("##ESPR status")
+Start-Sleep -Milliseconds 500
+Write-Host $port.ReadExisting()
+$port.Close()</pre>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec10"><span class="num">10</span>Verdrahtung (Kurzreferenz)</h1>
+<p>Vollständiger interaktiver Verdrahtungsplan mit allen 44 Header-Pins,
+zwei Ausbaustufen (mit/ohne Optokoppler) und Bauteilliste:
+<span class="code">docs/verdrahtungsplan.html</span>. Hier nur die
+wichtigsten Punkte.</p>
+<table>
+  <tr><th>Funktion</th><th>Pin</th></tr>
+  <tr><td>Power-/Reset-Taste-Erfassung (Gehäuse-Taster)</td><td>GPIO4 / GPIO5</td></tr>
+  <tr><td>Power-/Reset-Weiterleitung (Mainboard-Header)</td><td>GPIO6 / GPIO7</td></tr>
+  <tr><td>Power-/HDD-LED-Erfassung (Mainboard-Header)</td><td>GPIO15 / GPIO16</td></tr>
+  <tr><td>Power-/HDD-LED-Ansteuerung (Gehäuse)</td><td>GPIO17 / GPIO18</td></tr>
+  <tr><td>NTC-Temperatur / DHT11</td><td>GPIO1 / GPIO2</td></tr>
+  <tr><td>Watchdog-LED (fest verdrahtet, onboard)</td><td>GPIO48</td></tr>
+</table>
+<div class="callout good">
+  <div class="callout-title">Mit Optokoppler = empfohlen</div>
+  Für die Weiterleitungs-Ausgänge (GPIO6/7) zwei PC817-Optokoppler
+  verwenden — hält die ESP-Seite galvanisch getrennt vom Mainboard.
+  Bleibt auch dann sinnvoll, wenn beide Seiten dieselbe Stromquelle teilen
+  (siehe unten), da ein Verdrahtungsfehler dann nur den Optokoppler
+  kostet statt den GPIO oder einen daran hängenden Rechner. Details und
+  die einfachere (nicht empfohlene) Alternative:
+  <span class="code">docs/verdrahtungsplan.html</span> Abschnitt 4.
+</div>
+<div class="callout warn">
+  <div class="callout-title">Alternative Stromversorgung: ATX +5VSB — Dual-Powering-Gefahr</div>
+  Für Dauerbetrieb auch bei ausgeschaltetem PC lässt sich das Gerät über
+  die ATX-Standby-Schiene (24-Pin, Pin 9, violett) auf den
+  <span class="code">5Vin</span>-Header-Pin speisen. <b>Niemals
+  gleichzeitig</b> ein USB-Kabel an einen eingeschalteten Host-Rechner
+  anschließen, solange <span class="code">5Vin</span> aktiv gespeist wird
+  — beide Quellen liegen intern auf demselben 5V-Netz, ohne
+  Power-ORing-Schaltung droht eine Rückspeisung in USB-Host-Controller
+  oder ATX-Netzteil. Vollständige Herleitung:
+  <span class="code">docs/verdrahtungsplan.html</span> Abschnitt 2.
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section" id="sec-anhang">Anhang — Troubleshooting</h1>
+<table>
+  <tr><th>Problem</th><th>Mögliche Ursache / Lösung</th></tr>
+  <tr><td>Board wird von Windows nicht erkannt</td><td>USB-Seriell-Treiber fehlt (Port A) — installieren, danach Geräte-Manager prüfen</td></tr>
+  <tr><td>Flash-Vorgang schlägt fehl</td><td>Falscher COM-Port (<span class="code">-Port COM&lt;n&gt;</span> angeben), Board nicht an Port A angeschlossen, oder ein anderes Programm blockiert den seriellen Port (z.&nbsp;B. eine offene Serial-Sitzung, Abschnitt 9.2)</td></tr>
+  <tr><td>Erster Verbindungsversuch nach dem Flashen schlägt fehl</td><td>Normal — der erste Boot dauert länger (Abschnitt 1.4), <span class="code">Setup.ps1</span> versucht automatisch mehrfach erneut</td></tr>
+  <tr><td>Gerät nach der Ersteinrichtung nicht im Netzwerk erreichbar</td><td>WLAN-Zugangsdaten prüfen/erneut setzen (<span class="code">.\Setup.ps1 -SkipFlash</span> oder direkt <span class="code">wlan join</span> per USB, Abschnitt 9.1) — kein AP-Fallback-Modus vorhanden</td></tr>
+  <tr><td>Watchdog-LED bleibt dunkel oder eingefroren</td><td>Serielle Konsole an Port A prüfen (Boot-/Absturz-Log); bei einem echten Hänger startet das Gerät nach kurzer Zeit über den Task-Watchdog automatisch selbst neu (Abschnitt 3)</td></tr>
+  <tr><td>Web-Login schlägt fehl</td><td>Standard <span class="code">admin</span>/<span class="code">admin</span> (Abschnitt 4.1) — bei Passwortverlust hilft ein Werksreset (Abschnitt 5) oder das USB-Kommando <span class="code">reset settings</span> (Abschnitt 9.1)</td></tr>
+  <tr><td>SSH-Verbindung wird abgelehnt</td><td>Mindestrolle „SSH User" nötig, eigenen Public-Key vorher auf der Übersichtsseite hinterlegt? Nur ECDSA/Ed25519, kein RSA (Abschnitt 6). Läuft evtl. schon eine Web-Konsolen-Sitzung — nur eine gleichzeitige Sitzung möglich</td></tr>
+  <tr><td>OTA-Upload wird abgelehnt</td><td>Meldung genau lesen: „anderes Projekt" (falsche .bin), „älter als die laufende" (zweites Formular „Downgrade erzwingen" nutzen) oder „Schreibfehler" (Upload wiederholen) — Abschnitt 7</td></tr>
+  <tr><td>SNMP liefert keine Daten</td><td>Community-String prüfen (Abschnitt 5/8), „Use bulk requests" im Zabbix-Host-Interface deaktivieren, Firewall auf dem Empfänger prüfen (UDP 161)</td></tr>
+  <tr><td>Keine E-Mail-Benachrichtigungen</td><td>SMTP-Server in den Einstellungen gesetzt (Abschnitt 5)? Eigene Adresse + Aktiv-Schalter auf der Übersichtsseite gesetzt (Abschnitt 4.3)? Relay erzwingt evtl. TLS — dieses Gerät sendet bewusst nur Klartext-SMTP</td></tr>
+</table>
+
+<p style="margin-top:8mm; font-size:10px; color:#6b7280;">
+ESP-BMC — Admin-Guide ·
+Entwickelt mit Unterstützung von Claude (Anthropic) als Coding-Assistent
+</p>
+
+</body>
+</html>

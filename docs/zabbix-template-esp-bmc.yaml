@@ -1,0 +1,286 @@
+zabbix_export:
+  version: '6.4'
+  template_groups:
+    - uuid: 7cb82052cb15a77403a691dab2948223
+      name: ESP-BMC
+  templates:
+    - uuid: f4e45adb34ae32743cb8a24b54ee794f
+      template: ESP-BMC
+      name: ESP-BMC
+      description: |
+        Template fuer das ESP-BMC-Projekt (diymore ESP32-S3 DevKitC-1
+        N16R8/N8R8, PC-Fernsteuerung/BMC-lite). Fragt alle Werte per SNMP
+        v1/v2c ab (das Geraet antwortet in der Version der Anfrage, siehe
+        docs/entscheidungen.md "SNMP-Agent").
+
+        Nach dem Vorbild der Sensormeter-Familie aufgebaut (siehe
+        zabbix-template-sensormeter-wlan.yaml dort), aber eigene,
+        NICHT kompatible OID-Struktur - eigener Enterprise-Zweig
+        1.3.6.1.4.1.99999.10 (Sensormeter belegt .1 bis .5 direkt unter
+        .99999) - dieses Template nicht mit einem Sensormeter-Template
+        verwechseln/austauschen. Direkt gegen
+        firmware/components/snmp_manager/snmp_manager.c verifiziert.
+
+        Temperatur/Luftfeuchte werden vom Geraet als Ganzzahl *10
+        uebertragen und hier per Zabbix-Preprocessing (Multiplikator 0.1)
+        wieder in Dezimalwerte umgerechnet. Fehlt ein gueltiger Messwert
+        (Sensor nicht angeschlossen/Lesefehler), liefert das Geraet den
+        Sentinel-Wert -32768 (also -3276.8 nach der Umrechnung) - im
+        Zabbix-Dashboard als offensichtlich unplausibler Ausreisser
+        erkennbar, absichtlich keine zusaetzliche
+        Preprocessing-Fehlerbehandlung dafuer eingebaut (gleiche
+        Einfachheit wie beim Sensormeter-Vorbild).
+
+        powerKey/resetKey sind auf dem Geraet selbst auch per SNMP SET
+        schreibbar (loesen einen Tastendruck aus, eigene Schreib-
+        Community) - dieses Template bildet nur den Lesezustand ab
+        (aktuell "wird gerade weitergeleitet"), keine Zabbix-Aktion zum
+        Ausloesen, das ist bewusst außerhalb des Templates.
+
+        Vor dem Einsatz:
+        1. Dieses Template importieren
+        2. Neuen Host anlegen, dieses Template zuweisen
+        3. SNMP-Interface des Hosts auf die Board-IP setzen, Port 161
+        4. Host-Makro {$SNMP_COMMUNITY} anpassen, falls die Community auf
+           der Einstellungsseite des Geraets von "public" abweicht
+        5. Schwellwert-Makros ({$NTC_TEMP_MAX_C} etc.) an die auf dem
+           Geraet konfigurierten Werte anpassen, falls diese von den
+           Standardwerten abweichen (Einstellungen-Seite des Geraets)
+      groups:
+        - name: ESP-BMC
+      macros:
+        - macro: '{$SNMP_COMMUNITY}'
+          value: public
+          description: 'SNMP-Lese-Community (muss mit der Einstellungsseite des Geraets uebereinstimmen)'
+        - macro: '{$NTC_TEMP_MAX_C}'
+          value: '60'
+          description: 'Schwellwert fuer Hoch-Temperatur-Warnung, NTC 10K B3590'
+        - macro: '{$DHT_TEMP_MAX_C}'
+          value: '40'
+          description: 'Schwellwert fuer Hoch-Temperatur-Warnung, DHT11'
+        - macro: '{$DHT_HUMIDITY_MAX_PERCENT}'
+          value: '70'
+          description: 'Schwellwert fuer Hoch-Luftfeuchtigkeit-Warnung, DHT11'
+        - macro: '{$HEAP_MIN_BYTES}'
+          value: '20000'
+          description: 'Schwellwert fuer Warnung bei niedrigem freien Heap'
+      items:
+        - uuid: baa32188664a0e0068fe353483206813
+          name: 'System: Name'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.1.0'
+          key: system.name
+          delay: 1h
+          value_type: CHAR
+          description: 'Frei vergebbarer Systemname (Einstellungen-Seite), nicht der feste Systemtyp.'
+          tags:
+            - tag: component
+              value: system
+        - uuid: 742865b409b563862b9890d2640bc22c
+          name: 'System: Systemtyp'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.14.0'
+          key: system.type
+          delay: 1h
+          value_type: CHAR
+          description: 'Fest "ESP-BMC", identisch fuer jedes Geraet dieser Firmware.'
+          tags:
+            - tag: component
+              value: system
+        - uuid: c3a4c6bd73cf69572177e247558e36e3
+          name: 'System: Firmwareversion'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.17.0'
+          key: system.firmware
+          delay: 1h
+          value_type: CHAR
+          tags:
+            - tag: component
+              value: system
+        - uuid: db14c19771e176d4cdef8decac00279a
+          name: 'Netzwerk: WLAN-IP'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.3.0'
+          key: network.wlanip
+          delay: 5m
+          value_type: CHAR
+          tags:
+            - tag: component
+              value: network
+        - uuid: 841e531dbae7aaee19e4dd2dd3514450
+          name: 'Netzwerk: WLAN-SSID'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.4.0'
+          key: network.wlanssid
+          delay: 5m
+          value_type: CHAR
+          tags:
+            - tag: component
+              value: network
+        - uuid: f68fe6c8d7939fb9d94dee7ec4803b23
+          name: 'Netzwerk: WLAN statische IP aktiv'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.13.0'
+          key: network.wlanstatic
+          delay: 5m
+          value_type: UNSIGNED
+          description: '0 = DHCP, 1 = statische IP konfiguriert.'
+          tags:
+            - tag: component
+              value: network
+        - uuid: e703cb3afd6a15edf96f47596e260d2e
+          name: 'VPN: Tunnel-Status'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.5.0'
+          key: vpn.up
+          delay: 1m
+          value_type: UNSIGNED
+          description: '0 = kein Tunnel, 1 = Tunnel aktiv. Kurzes Intervall, da fuer den Fernzugriff auf den verwalteten PC kritisch.'
+          tags:
+            - tag: component
+              value: vpn
+        - uuid: ad519d5e333649034ad7f3dd02373f36
+          name: 'VPN: Lokale Tunnel-IP'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.6.0'
+          key: vpn.localip
+          delay: 5m
+          value_type: CHAR
+          tags:
+            - tag: component
+              value: vpn
+        - uuid: c4582ac7f44d7ff02d565112150c7b27
+          name: 'Sensor: NTC-Temperatur'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.7.0'
+          key: sensor.ntctemp
+          delay: 1m
+          value_type: FLOAT
+          units: °C
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.1'
+          tags:
+            - tag: component
+              value: sensor
+        - uuid: 382e4b09b8480d8a19025a8dc7e7ad3a
+          name: 'Sensor: DHT11-Temperatur'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.8.0'
+          key: sensor.dhttemp
+          delay: 1m
+          value_type: FLOAT
+          units: °C
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.1'
+          tags:
+            - tag: component
+              value: sensor
+        - uuid: 1307fe42b4b9897bbb8b76cefe2d2862
+          name: 'Sensor: DHT11-Luftfeuchtigkeit'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.9.0'
+          key: sensor.dhthumidity
+          delay: 1m
+          value_type: FLOAT
+          units: '%'
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.1'
+          tags:
+            - tag: component
+              value: sensor
+        - uuid: 149a8be12cff43fd0c36af078cf846dd
+          name: 'Status: Power-LED (Gehaeuse)'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.10.0'
+          key: status.powerled
+          delay: 1m
+          value_type: UNSIGNED
+          description: '0 = aus, 1 = an. Momentan-Zustand des erfassten Mainboard-Power-LED-Signals.'
+          tags:
+            - tag: component
+              value: status
+        - uuid: 5d7d5e3d02c9c82ac07f0c6297b31376
+          name: 'Status: HDD-LED-Aktivitaet (10s)'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.11.0'
+          key: status.hddled
+          delay: 1m
+          value_type: UNSIGNED
+          description: '1 = innerhalb der letzten 10s mindestens ein Signal erfasst (faengt auch kurze Blinkimpulse zwischen zwei Abfragen).'
+          tags:
+            - tag: component
+              value: status
+        - uuid: 3506951b8fbacbdfd6520816db27b984
+          name: 'Status: Power-Taste weitergeleitet'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.15.0'
+          key: status.powerkey
+          delay: 1m
+          value_type: UNSIGNED
+          description: '1 = ein Tastendruck wird gerade an den Mainboard-Header weitergeleitet (physisch, per Web/USB/SNMP ausgeloest). Per SNMP SET auch schreibbar, siehe Template-Beschreibung.'
+          tags:
+            - tag: component
+              value: status
+        - uuid: 04658bb77d8e0353468f0cf7518f4db9
+          name: 'Status: Reset-Taste weitergeleitet'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.16.0'
+          key: status.resetkey
+          delay: 1m
+          value_type: UNSIGNED
+          tags:
+            - tag: component
+              value: status
+        - uuid: b03a8ed3a1724e456d8f742496f310b7
+          name: 'Status: Freier Heap'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.12.0'
+          key: status.freeheap
+          delay: 5m
+          value_type: UNSIGNED
+          units: B
+          tags:
+            - tag: component
+              value: status
+        - uuid: 2d15267158d922fd410fc6dd6b50479f
+          name: 'Status: Uptime'
+          type: SNMP_AGENT
+          snmp_oid: '.1.3.6.1.4.1.99999.10.2.0'
+          key: status.uptime
+          delay: 5m
+          value_type: TEXT
+          description: 'SNMP-TimeTicks (Zentisekunden), Zabbix zeigt sie als formatierte Zeitspanne an.'
+          tags:
+            - tag: component
+              value: status
+  triggers:
+    - uuid: 6e3f3f755208da10643735fa2e3e08ab
+      name: 'NTC-Temperatur zu hoch auf {HOST.NAME}'
+      expression: 'last(/ESP-BMC/sensor.ntctemp)>{$NTC_TEMP_MAX_C}'
+      priority: WARNING
+    - uuid: d557f4c9b7ed27f848aad469cb0e359a
+      name: 'DHT11-Temperatur zu hoch auf {HOST.NAME}'
+      expression: 'last(/ESP-BMC/sensor.dhttemp)>{$DHT_TEMP_MAX_C}'
+      priority: WARNING
+    - uuid: f71cf991a91a8a5ad4a356a4166bb65b
+      name: 'DHT11-Luftfeuchtigkeit zu hoch auf {HOST.NAME}'
+      expression: 'last(/ESP-BMC/sensor.dhthumidity)>{$DHT_HUMIDITY_MAX_PERCENT}'
+      priority: WARNING
+    - uuid: a75632bc73d98e10f9053850042e4498
+      name: 'Freier Heap niedrig auf {HOST.NAME}'
+      expression: 'last(/ESP-BMC/status.freeheap)<{$HEAP_MIN_BYTES}'
+      priority: WARNING
+    - uuid: e65a7bec1c422c9787fd01d42724e257
+      name: 'VPN-Tunnel down auf {HOST.NAME}'
+      expression: 'last(/ESP-BMC/vpn.up)=0'
+      priority: HIGH
+    - uuid: 69cfacbe984cd8b514131cc442660aff
+      name: 'Keine SNMP-Daten von {HOST.NAME} seit 10 Minuten'
+      expression: 'nodata(/ESP-BMC/status.uptime,10m)=1'
+      priority: HIGH

@@ -950,3 +950,1312 @@ Nach der Umbenennung beide Umgebungen sauber neu gebaut (Kconfig-Rename
 ist der riskanteste Teil - Build-Verifikation war Pflicht, nicht
 optional). Danach `git init` im Projektordner, erster Commit - noch kein
 Remote/Push (Repo bleibt vorerst lokal).
+
+## 2026-07-17 — SNMP-Agent
+
+Neue Komponente `snmp_manager`: schreibgeschuetzter SNMPv1-Agent (UDP
+Port 161), analog dem bereits produktiven Muster der Sensormeter-Familie
+(dort per Zabbix-Template bereits im Einsatz).
+
+### Warum kein lwIP-SNMP-APPS-Modul
+
+ESP-IDFs lwIP bringt ein eigenes SNMP-Modul mit (`CONFIG_LWIP_SNMP`),
+dessen private-MIB-API aber recht umstaendlich ist (statischer Baum aus
+`mib_node_t`/`mib_scalar_node_t`-Strukturen mit eigenen GET/GETNEXT/SET-
+Callback-Konventionen, siehe lwIP-eigene `snmp_mib.h`/Beispiele) und in
+ESP-IDF kaum dokumentiert/benutzt ist. Fuer eine kleine, feste
+Skalar-OID-Tabelle (13 Werte, kein SET, kein GetBulk) ist das
+unverhaeltnismaessig. Stattdessen: direkt auf einem rohen UDP-Socket
+(`lwip/sockets.h`, ESP-IDF-Standardweg) ein minimaler, auf genau diese
+Nachrichtenform zugeschnittener BER/ASN.1-Encoder/Decoder von Hand
+geschrieben - inhaltlich derselbe Ansatz wie bei der Sensormeter-Familie
+(dort per dritter Bibliothek in C++/Arduino), nur ohne Bibliotheks-
+Abhaengigkeit.
+
+### Umfang (bewusst eingeschraenkt)
+
+- Nur GET und GETNEXT, kein SET (strukturell nicht implementiert - jede
+  andere PDU wird mit `genErr` beantwortet), kein GetBulk. Zabbix-Hosts
+  muessen deshalb "Use bulk requests" am SNMP-Interface deaktivieren.
+- SNMPv1-Semantik fuer Fehlercodes, akzeptiert aber sowohl Version 0
+  (v1) als auch 1 (v2c) im Request (wie Sensormeters Agent) - kein
+  SNMPv3.
+- Community-basierte Zugriffskontrolle (Default "public", auf der
+  Einstellungen-Seite änderbar, persistiert unter `/storage/snmp.json`
+  wie WLAN/WireGuard). Falsche Community: keine Antwort (kein
+  Informationsleck ueber Existenz von OIDs).
+- GETNEXT ist ein linearer Scan ueber die (aufsteigend sortierte)
+  OID-Tabelle mit einem allgemeinen lexikografischen OID-Vergleich -
+  funktioniert korrekt sowohl fuer gezielte Zabbix-Item-Abfragen als
+  auch fuer einen manuellen `snmpwalk` zum Testen.
+
+### OID-Schema
+
+Private Enterprise-MIB unter `1.3.6.1.4.1.99999.10` (dieselbe frei
+erfundene, unregistrierte "Haushalts"-Enterprise-Nummer 99999 wie bei
+der Sensormeter-Familie, die dort direkt `.1` bis `.5` belegt - Zweig
+`.10` ist neu und ESP-BMC vorbehalten). 13 Skalare (`.1.0` bis `.13.0`):
+sysName, uptimeTicks, wlanIp, wlanSsid, vpnUp, vpnLocalIp,
+ntcTempC×10, dhtTempC×10, dhtHumidityPct×10, powerLedOn,
+hddLedActive10s, freeHeapBytes, wlanStatic. Temperaturen/Feuchte als
+×10-Festkomma-INTEGER (gleiche Konvention wie Sensormeter), fehlende
+Sensorwerte als Sentinel -32768 statt eines fehlenden OIDs (einfacher
+fuer Zabbix-Trigger als "kein Wert" zu behandeln).
+
+### Ergebnis
+
+Beide Umgebungen bauen sauber (Flash real ~51.0%, RAM ~17.5%). Alle
+Puffergroessen im Encoder wurden von Hand gegen den theoretischen
+Worst-Case (10 Varbinds je Anfrage, laengster String-Wert) nachgerechnet -
+kein Ueberlauf. Noch nicht gegen einen echten SNMP-Client (net-snmp
+`snmpget`/`snmpwalk`, Zabbix) getestet - das geht erst mit echter
+Hardware/Netzwerk. Ein passendes Zabbix-Template (analog
+`docs/zabbix-template-sensormeter.yaml` der Sensormeter-Familie) ist
+noch nicht angelegt.
+
+## 2026-07-17 — SNMP-Agent: Systemname/-typ getrennt, SET fuer Power/Reset-Taste
+
+Drei Ergaenzungen zum SNMP-Agenten auf Nutzerwunsch.
+
+### Systemname (frei) vs. Systemtyp (fest)
+
+`sysName` (.1) war bisher fest "ESP-BMC" - jetzt liest es einen frei
+vergebbaren Namen (z.B. "Buero-PC"), neues Objekt `sysType` (.14, neu
+angehaengt statt umnummeriert) liefert weiterhin fest "ESP-BMC". Der
+Name lebt neu in `config_manager` (`config_manager_get/set_device_name()`),
+dem bisher einzigen RAM-only-Modul dieses Projekts - dafuer bekam es
+seine erste echte Persistenz (`/storage/device.json`, gleiches
+JSON-Muster wie WLAN/WireGuard/SNMP), waehrend Tastschutz/Schwellwerte
+bewusst weiterhin RAM-only bleiben (kein Anlass, den Rahmen des Moduls
+jetzt komplett zu erweitern). Einstellungen-Seite: neues Feld im
+System-Card. `config_manager_reset_to_defaults()` setzt den Namen mit
+zurueck.
+
+### SNMP SET fuer powerKey/resetKey
+
+Neue Objekte `powerKey` (.15) und `resetKey` (.16), beide GET+SET:
+- GET liefert den aktuellen Weiterleitungs-Zustand (1 = Tastendruck
+  gerade aktiv, unabhaengig davon ob physisch oder per Web/USB/SNMP
+  ausgeloest) - `gpio_manager_*_taste_weitergeleitet()`.
+- SET loest einen Tastendruck aus, ueber dieselbe
+  `gpio_manager_trigger_power()/_reset()`-Logik wie die Web/USB-
+  Taster-Steuerung (respektiert also denselben Tastschutz). powerKey:
+  1=kurz, 2=lang (erzwungenes Abschalten). resetKey: nur 1=kurz.
+
+**Sicherheitsaspekt, bewusst gegenueber dem Nutzer dokumentiert:** SNMP
+kennt anders als Web/USB keine Benutzeranmeldung - eine
+Passwort-Rueckbestaetigung wie bei der Verwalter-Rolle ist hier
+grundsaetzlich nicht moeglich. Deshalb: getrennte Lese-/Schreib-
+Community (`snmp_manager_get/set_rw_community()`, Standardwert
+"private" - uebliche SNMP-Konvention, analog ro/rwcommunity bei
+net-snmp), NICHT dieselbe wie die Lese-Community. Wer nur die
+Lese-Community kennt, bekommt bei einem SET-Versuch eine explizite
+Fehlerantwort (kein stilles Verwerfen - die Community ist ja bereits als
+bekannt bestaetigt, kein zusaetzliches Informationsleck). Jede
+erfolgreiche wie abgelehnte SNMP-Ausloesung landet im Audit-Log
+(Quell-IP statt Benutzername, da SNMP keine Identitaet hat) - Eintrag
+"Taster ... ausgeloest von <ip> (SNMP)".
+
+Bei mehreren Varbinds in einer SET-PDU: kein echtes Rollback bei
+Teilfehlern (ein bereits ausgeloester Tastendruck laesst sich nicht
+zuruecknehmen) - bei der ueblichen Nutzung (ein Varbind pro Request) ist
+das nicht beobachtbar, volle Transaktions-Semantik waere fuer diesen
+Anwendungsfall unverhaeltnismaessiger Aufwand.
+
+### Bug beim Erstentwurf gefunden und behoben
+
+Beim ersten Entwurf wurde die Quell-IP fuer den Audit-Log-Eintrag ERST
+NACH der Varbind-Verarbeitungsschleife gesetzt - die Setter-Funktionen
+lasen also noch die IP des vorherigen Pakets (oder NULL beim allerersten
+SET). Vor dem ersten Build gefunden und korrigiert (IP-Ermittlung jetzt
+vor die Schleife gezogen).
+
+### Ergebnis
+
+Beide Umgebungen bauen sauber (Flash real ~51.2%, RAM ~17.5%). Wie beim
+Rest des SNMP-Agenten: noch nicht gegen einen echten SNMP-Client
+getestet.
+
+## 2026-07-17 — Setup-Tooling (inital-setup.txt umgesetzt, PowerShell statt Python)
+
+`tools/` neu angelegt: `EspBmcLink.psm1` (PowerShell-Modul, Client fuer
+das USB-Kommandoprotokoll ueber `System.IO.Ports.SerialPort`),
+`Setup.ps1` (interaktives Erstinbetriebnahme-Skript, genau der Ablauf
+aus `inital setup.txt`: Firmware flashen -> Konfigurationsvorlage im
+Editor bearbeiten und per USB anwenden -> optional WireGuard-.conf aus
+dem aktuellen Ordner importieren -> optional WLAN-Scan+Beitritt),
+`config_template.txt` (editierbare Vorlage: Systemname, SNMP-
+Communities, Schwellwerte, Tastschutz).
+
+Erster Entwurf war in Python (pyserial) - auf Wunsch auf reines
+PowerShell umgestellt (kein zusaetzliches Laufzeit-/Paket-
+Requirement, passt zur ueberwiegend PowerShell-basierten
+Arbeitsumgebung). Response-Parsing-Logik gegen synthetische, dem
+Firmware-Code exakt nachgebildete Antworten getestet (kein Zugriff auf
+echte Hardware fuer einen echten End-to-End-Test).
+
+Dafuer noetige neue USB-Kommandos in `usb_manager.c` ergaenzt:
+`system set <name>`, `snmp set <ro> <rw>`,
+`thresholds set <ntc> <dht> <hum>`, `tastschutz set 0|1` - vorher gab es
+keinen USB-Weg, diese vier Werte zu setzen (nur ueber die Web-UI).
+`config download` liefert jetzt zusaetzlich Systemname/-typ,
+Tastschutz, Schwellwerte und SNMP-Communities (vorher nur
+Netzwerk/VPN/Benutzer) - dient auch als Verifikation nach dem Anwenden
+der Konfigurationsvorlage.
+
+**Kein Git-Remote-Download** (fuer Firmware oder Vorlage) - es existiert
+noch kein Remote, das Skript arbeitet mit dem lokalen Checkout
+(`-EnvName`/`-Template` zeigen bei Bedarf auf etwas anderes). Nachtrag
+faellig, sobald ein Remote existiert.
+
+Auf Wunsch noch keine Nutzungsdokumentation geschrieben (nur dieser
+Entscheidungslog-Eintrag) - Skripte sind selbsterklaerend genug fuer den
+Moment (Kommentare + `Get-Help Setup.ps1`).
+
+## 2026-07-17 — Nachtrag Setup-Tooling: Inkonsistenzen gefunden und behoben
+
+Auf Nutzeranfrage die eben fertiggestellten Tooling-Dateien nochmal
+geprueft.
+
+- **`config_template.txt` referenzierte noch `setup.py`** (zwei Stellen,
+  Kommentare) - Ueberbleibsel vom verworfenen Python-Entwurf. Auf
+  `Setup.ps1` korrigiert.
+- **Echter Bug gefunden: `[double]$Values["ntc_temp_max_c"]` in
+  Setup.ps1 nutzt die aktuelle System-Kultur.** Unter de-DE (dem System,
+  auf dem das laeuft) wird `[double]"60,5"` NICHT als Fehler abgelehnt,
+  sondern lautlos zu `605` fehlinterpretiert (Komma als
+  Tausendertrennzeichen statt Dezimaltrennzeichen) - empirisch
+  nachgestellt und bestaetigt. Ein deutschsprachiger Nutzer, der in der
+  Konfigurationsvorlage naturgemaess ein Komma statt Punkt tippt, haette
+  also einen kaputten Schwellwert unbemerkt aufs Geraet uebertragen.
+  Behoben mit einer expliziten `[double]::TryParse(...,
+  [CultureInfo]::InvariantCulture)`-Hilfsfunktion
+  (`ConvertTo-InvariantDouble`), die bei ungueltigem Format jetzt einen
+  klaren Fehler wirft statt einen falschen Wert stillschweigend zu
+  akzeptieren. `config_template.txt` weist jetzt explizit auf "Punkt,
+  kein Komma" hin.
+- **Bekannte, nicht behobene Einschraenkung (kosmetisch, nicht neu):**
+  Das `status`-Kommando in `usb_manager.c` (bereits vor dieser Session
+  gebaut) sendet Key=Value-Paare leerzeichengetrennt in einer Zeile
+  (`wlan_ssid=%s ...`). Eine SSID mit Leerzeichen (z.B. "Mein Heim
+  WLAN") wuerde beim leerzeichenbasierten Parsen in
+  `Get-EspBmcStatus` falsch aufgeteilt. Betrifft nur die
+  Status-Anzeige am Ende von `Setup.ps1` (rein informativ, keine
+  Folgeaktion haengt daran) - `wlan scan`/`wlan join` sind davon NICHT
+  betroffen (semikolon-getrennt, siehe `cmd_wlan_scan()`). Fix wuerde
+  eine Aenderung am Wire-Format von `cmd_status()` erfordern (z.B.
+  Anfuehrungszeichen um String-Werte) - bewusst nicht spontan
+  mitgemacht, da das den Rahmen dieser Pruefung gesprengt haette.
+
+## 2026-07-17 — Projektstand-Dokument angelegt
+
+Neu: `docs/projektstand.md` - Abgleich Lastenheft/Pflichtenheft gegen
+den tatsaechlichen Code-Stand (nicht nur gegen das, was hier im
+Entscheidungslog irgendwann mal geplant war). Enthaelt Partitionstabelle
+und aktuellen Flash-/RAM-Fuellstand (frisch nachgebaut fuer diesen
+Eintrag, nicht aus dem Gedaechtnis zitiert).
+
+Zwei konkrete, bisher nirgends explizit festgehaltene Luecken beim
+Abgleich gefunden:
+- Tastschutz laesst sich per USB umschalten, aber **nicht ueber die
+  Weboberflaeche** - Lastenheft Abschnitt 8 fordert das aber
+  ausdruecklich fuer das Webinterface.
+- `gpio_manager_set_power_led()`/`_set_hdd_led()` (Gehaeuse-LED-
+  Ansteuerung, Lastenheft Abschnitt 5) existieren als GPIO-Funktion,
+  werden aber von keiner Stelle im Code aufgerufen - keine Web-/USB-
+  Anbindung vorhanden.
+
+Beide als offene Punkte in `docs/projektstand.md` Abschnitt 2
+aufgenommen, noch nicht behoben.
+
+## 2026-07-17 — Beide in projektstand.md gefundenen Luecken behoben
+
+### Tastschutz: Web-UI-Schalter nachgezogen
+
+Neue Checkbox-Karte auf der Einstellungen-Seite
+(`settings_tastschutz_post_handler`, `/settings/tastschutz`,
+Verwalter+). USB-Kommando (`tastschutz set 0|1`) existierte bereits aus
+der Setup-Tooling-Arbeit vom selben Tag - hier nur die fehlende
+Web-Anbindung ergaenzt, keine neue Logik in `config_manager` noetig.
+
+### Gehaeuse-LED-Ansteuerung: Web + USB nachgezogen
+
+`gpio_manager_set_power_led()`/`_set_hdd_led()` existierten als
+GPIO-Funktion, hatten aber keinen Aufrufer. Neu:
+- Software-Schattenkopie des gesetzten Zustands
+  (`gpio_manager_power_led_out_state()`/`_hdd_led_out_state()`) - aus
+  demselben Grund wie bei `TasterKanal.weitergeleitet`: kein
+  zuverlaessiges GPIO-Readback auf einem OUTPUT-Pin.
+- Web: Checkbox-Karte "Gehaeuse-LEDs" auf der Einstellungen-Seite
+  (`settings_led_post_handler`, `/settings/led`, Verwalter+).
+- USB: neues Kommando `led set power|hdd 0|1`.
+
+Beide Wege rufen dieselbe `gpio_manager`-Funktion auf, keine doppelte
+Logik. Rollen-/Audit-Verhalten konsistent mit den uebrigen
+Einstellungen (Verwalter+, Audit-Log-Eintrag, kein Passwort-
+Ruecksicherungszwang wie bei der Taster-Steuerung - reine
+Anzeige-/Diagnosefunktion, kein physischer Taster-Effekt).
+
+### Ergebnis
+
+Zwei format-truncation-Warnungen beim ersten Build (Event-Puffer zu
+knapp bemessen, bekanntes Muster) - Puffer vergroessert, danach beide
+Umgebungen sauber gebaut (Flash real 51,3 % / 1.076.741 Byte, RAM 17,5 %;
+Wokwi-Sim 50,3 % / 1.055.069 Byte).
+
+`docs/projektstand.md` Abschnitt 1/2 aktualisiert - beide Punkte von
+"offen" auf "umgesetzt" verschoben.
+
+## 2026-07-17 — SSH-Server (P7)
+
+Architektur wie mit dem Nutzer festgelegt: der ESP betreibt einen
+**eigenen SSH-Server** (nicht Pass-Through/Proxy zu einer sshd auf dem
+gesteuerten PC). Ein Nutzer meldet sich direkt am ESP an (dieselbe
+user_manager-Kontodatenbank wie Web/USB), die Sitzung steuert danach
+dieselbe CDC/HID-Bruecke wie die WebSocket-Konsole.
+
+### Bibliothek: wolfssl/wolfssh ueber den ESP-Component-Registry
+
+wolfssl/wolfssh (v1.4.20) ist als offizielle Managed Component
+verfuegbar (components.espressif.com), zieht wolfssl/wolfssl (v5.8.2)
+als eigene Abhaengigkeit. Deutlich saubererer Ausgangspunkt als die
+WireGuard-Bibliothekssuche (kein Fork noetig) - aber die Integration
+selbst war trotzdem eine laengere Fehlerkette, komplett neu fuer dieses
+Projekt (kein Vorbild in der Sensormeter-Familie). Reihenfolge der
+gefundenen und behobenen Probleme, damit ein zukuenftiges "das baut
+ploetzlich nicht mehr"-Problem schneller einsortiert werden kann:
+
+1. wolfssh alleine reicht nicht - idf_component.yml braucht explizit
+   auch wolfssl/wolfssl, sonst schlaegt die Komponentenaufloesung fehl
+   ("Failed to resolve component 'wolfssl'").
+2. WOLFSSL_USER_SETTINGS propagiert nicht komponentenuebergreifend.
+   wolfssl/wolfssls eigene CMakeLists.txt setzt dieses Define zwar
+   selbst, aber nur fuer die eigene Komponente - wolfssl/wolfssh ist ein
+   separates Component-Target und sieht es nicht. Ohne das Define sucht
+   wolfssh/ssh.h nach dem autoconf-generierten wolfssl/options.h, das es
+   bei einer Managed-Component-Installation nie gibt. Fix:
+   -DWOLFSSL_USER_SETTINGS projektweit in firmware/CMakeLists.txt
+   (CMAKE_C_FLAGS, vor project()).
+3. WOLFSSH_NO_RSA-Redefinitionsfehler - das mitgelieferte
+   wolfssl/wolfssl/include/user_settings.h-Template setzt dieses Define
+   fuer ESP32-S3 bereits selbst (RSA per Default aus, ECC per Default an
+   - passt zufaellig genau zu unserem Plan). Ein eigenes
+   -DWOLFSSH_NO_RSA fuehrt zu einer Redefinitions-Fehlermeldung - nicht
+   noetig, einfach weglassen.
+4. #warning "RSA may be difficult with less than 10KB Stack" wird durch
+   das projektweite -Werror zum harten Build-Fehler, obwohl wolfSSH RSA
+   in unserer Konfiguration gar nicht nutzt (nur WOLFSSH_NO_RSA, nicht
+   wolfCrypts eigenes NO_RSA, war gesetzt - der RSA-Primitive-Codepfad in
+   wolfCrypt selbst blieb dadurch aktiv). Fix: zusaetzlich -DNO_RSA
+   projektweit.
+5. ESP32-S3-Hardwarebeschleunigungs-Ports von wolfSSL sind gegen unsere
+   ESP-IDF-Version (6.0.1) kaputt - esp32_aes.c/esp32_sha.c referenzieren
+   PERIPH_AES_MODULE und hal/clk_gate_ll.h, beides in dieser
+   IDF-Version umbenannt/entfernt (dieselbe Kategorie Problem wie bei
+   WireGuard/mbedtls 4.x - IDF6 bricht wiederholt Drittbibliotheken, die
+   auf interne ESP-IDF-APIs zugreifen). Reine Software-Kryptografie ist
+   fuer eine von Hand bedienten SSH-Konsole (kein Hochdurchsatz-TLS)
+   voellig ausreichend. Fix: -DNO_ESP32_CRYPT UND zusaetzlich die
+   feingranularen Einzel-Flags (-DNO_WOLFSSL_ESP32_CRYPT_HASH
+   -DNO_WOLFSSL_ESP32_CRYPT_AES -DNO_WOLFSSL_ESP32_CRYPT_RSA_PRI) - der
+   grobe Schalter alleine reicht nicht, wolfssl/openssl/sha.h prueft
+   z.B. nur den feingranularen Schalter direkt und referenziert sonst
+   den (jetzt nicht mehr deklarierten) Typ WC_ESP32SHA.
+6. CONFIG_ESP_ENABLE_WOLFSSH (Kconfig) fehlte - das mitgelieferte
+   user_settings.h-Template schaltet WOLFSSL_WOLFSSH/WOLFSSH_TERM/
+   WOLFSSL_KEY_GEN/WOLFSSL_PTHREADS nur frei, wenn dieser
+   Kconfig-Schalter aktiv ist (Default aus!) - ohne ihn fehlte u.a.
+   wc_SSH_KDF (implicit declaration). In allen drei sdkconfig-Dateien
+   ergaenzt.
+7. Reserviertes Schluesselwort thread_local kollidiert mit einem
+   Enum-Member-Namen in wolfcrypt/src/port/Espressif/esp_sdk_mem_lib.c
+   (eine reine Speicher-Introspektions-/Debug-Datei, fuer
+   SSH-Funktionalitaet irrelevant) - unter unserem Toolchain (GCC
+   15.2.0, vermutlich C23-Default) ist thread_local ein echtes
+   Schluesselwort, kein Makro (-Uthread_local bewirkt NICHTS, wurde
+   ausprobiert und verworfen). Wichtig fuer die Zukunft: ein Hand-Patch
+   der Datei in managed_components/ wird vom
+   ESP-IDF-Component-Manager bei jeder CMake-Neukonfiguration wieder
+   verworfen (Cache-Integritaetspruefung stellt den Originalzustand
+   wieder her) - deshalb liegt der Fix jetzt als idempotenter
+   CMake-Schritt in firmware/CMakeLists.txt (nach project(), ueberprueft
+   bei jeder Konfiguration ob der Patch noch drin ist und wendet ihn
+   sonst erneut an). Das ist robuster als ein manueller Patch, aber
+   falls wolfssl/wolfssl auf eine neue Version aktualisiert wird und
+   sich die betroffene Codezeile aendert, muss dieser
+   CMake-Patch-Block eventuell nachgezogen werden.
+
+### Host-Key
+
+ECC P-256 (RSA projektweit deaktiviert), einmalig erzeugt
+(wc_ecc_make_key+wc_EccKeyToDer) und auf /storage/ssh_host_key.der
+persistiert - ohne das wuerde bei jedem Neustart ein neuer Host-Key
+entstehen und jeder SSH-Client vor einem vermeintlichen MITM warnen.
+
+### Authentifizierung
+
+Passwort UND Public-Key, beide gegen dieselbe user_manager-
+Kontodatenbank, Mindestrolle SSH_USER. Public-Key-Vergleich: der Nutzer
+hinterlegt seinen oeffentlichen Schluessel im ueblichen OpenSSH-
+Zeilenformat ueber ein neues Selbstbedienungs-Formular auf der
+Uebersichtsseite (/account/ssh-key, jeder Nutzer nur fuer sich selbst -
+kein Admin-Formular fuer fremde Konten, dafuer gibt es keinen Bedarf).
+user_manager speichert nur den Base64-Block (der Typ-String steckt
+redundant im Wire-Format-Blob selbst), dekodiert ihn bei der Anmeldung
+und vergleicht byteweise gegen den vom SSH-Client praesentierten Blob -
+wolfSSH prueft die kryptografische Signatur selbst, bevor unser Callback
+mit hasSignature=1 aufgerufen wird. Nur ECDSA/Ed25519-Client-Schluessel
+funktionieren (RSA projektweit deaktiviert) - im Formular-
+Platzhaltertext vermerkt.
+
+### Konsolen-Bruecke und Exklusivitaet
+
+SSH-Session-Ein-/Ausgabe wird auf dieselbe usb_manager-CDC-Queue/
+-Schreibfunktion gebrueckt wie die WebSocket-Konsole. Da eine
+FreeRTOS-Queue jedes Element nur an EINEN Empfaenger liefert, braucht es
+Exklusivitaet zwischen den beiden Konsolen-Quellen - neu:
+usb_manager_console_claim()/_release()/_owner() (drei Zustaende:
+NONE/WEB/SSH). console_pump_task (Web) leert die Queue jetzt nur noch,
+wenn sie tatsaechlich Besitzer ist; die SSH-Sitzung beansprucht den
+Besitz erst nach erfolgreicher Anmeldung und gibt ihn beim Sitzungsende
+wieder frei. Genau eine gleichzeitige Sitzung ist damit strukturell
+erzwungen (TCP-Listen-Backlog zusaetzlich auf 1 gesetzt) - ein zweiter
+Verbindungsversuch waehrend einer aktiven Sitzung wird abgelehnt.
+
+wolfSSH_worker() (blockierender High-Level-Kanal-Dispatcher der
+Bibliothek) wird in einer Schleife mit kurzem Socket-Timeout (200ms,
+SO_RCVTIMEO) aufgerufen, damit dieselbe Schleife auch regelmaessig die
+CDC-RX-Queue in Richtung SSH-Client leeren kann (kein echtes
+asynchrones I/O, aber fuer eine von Hand bedienten Konsole voellig
+ausreichend - dasselbe Muster wie console_pump_tasks Polling).
+
+### Ergebnis
+
+Beide Umgebungen bauen sauber (Wokwi-Sim diese Runde nicht gebaut - auf
+Nutzerwunsch pausiert, siehe Projekt-Memory). Real-Hardware-Env: Flash
+stieg von 51,3 % (vor P7) auf 59,1 % (1.239.409 Byte von 2 MB) - der
+Sprung kam erst mit der tatsaechlichen ssh_manager.c-Implementierung
+(der anfangs nur kompilierende Platzhalter hatte praktisch keinen
+Effekt, da der Linker unreferenzierten wolfSSH/wolfSSL-Code
+herausgeworfen hatte) - unter 2 MB weiterhin komfortabel Platz. RAM
+18,6 % (60.864 Byte), weiterhin unkritisch.
+
+Nicht auf echter Hardware/gegen einen echten SSH-Client getestet - wie
+bei P1 (WireGuard) gilt: kompiliert, Fussabdruck gemessen,
+Protokollkorrektheit (insbesondere der zweistufige
+Public-Key-Handshake und das Non-Blocking-Verhalten von
+wolfSSH_worker() unter echtem Netzwerk-Jitter) noch nicht verifiziert.
+
+Bewusst nicht umgesetzt:
+- Kein USB-Kommando fuer das SSH-Key-Hinterlegen (nur Web) - ein
+  100+-Zeichen-Base64-Blob ueber ein rohes Terminal einzutippen waere
+  schlechte UX, das Web-Formular ist der sinnvollere Weg.
+- Kein Rate-Limiting gegen SSH-Brute-Force - identisch zum bisherigen
+  Web-/USB-Login-Verhalten, keine Regression, aber auch keine
+  Verbesserung.
+- Keine SSH-Sitzungs-Warteschlange - ein zweiter Verbindungsversuch
+  waehrend einer aktiven Sitzung wird abgelehnt, nicht verzoegert bis
+  die erste endet.
+
+### Nachtrag 2026-07-17 (spaeter): Host-Key-Fingerprint auf der Uebersichtsseite
+
+Auf Nutzerfrage ("ist der Key als vertraulich zu betrachten?"):
+**nein** - der oeffentliche Host-Key wird bei jedem Handshake ohnehin an
+jeden verbindenden Client uebertragen, das ist kein Geheimnis (im
+Gegensatz zum privaten Schluessel, der das Geraet nie verlaesst).
+Deshalb auf die Uebersichtsseite gesetzt statt hinter die
+Einstellungen-Seite - fuer jeden angemeldeten Nutzer sichtbar, keine
+Rollenbeschraenkung noetig, da nur Anzeige (kein Setzen/Aendern).
+
+wolfSSH selbst bietet keine Export-/Fingerprint-Hilfsfunktion (geprueft
+in wolfssh/ssh.h - nur WS_UserAuthData_PublicKey/WS_CallbackPublicKeyCheck
+fuer die Client-Seite, nichts fuer die eigene Host-Key-Anzeige). Von Hand
+ueber wolfCrypt aufgebaut:
+- `wc_EccPrivateKeyDecode()` dekodiert den persistierten DER-Host-Key
+  zurueck in ein `ecc_key` (ssh_manager haelt sonst nur die rohen
+  DER-Bytes, kein Live-`ecc_key`-Objekt nach der Init-Phase).
+- `wc_ecc_export_x963()` liefert den oeffentlichen Punkt im Format
+  `0x04||X||Y` - das ist bytegleich mit dem "Q"-Feld, das das
+  SSH-Wire-Format (RFC 5656) fuer ECDSA-Keys erwartet, direkt
+  weiterverwendbar ohne Umrechnung.
+- Wire-Format-Blob von Hand zusammengesetzt (laengenpraefixierte
+  Strings: Typ "ecdsa-sha2-nistp256", Kurvenname "nistp256", Punkt) -
+  daraus per Base64 die volle Public-Key-Zeile (OpenSSH-Format) und per
+  SHA256 (`wc_InitSha256`/`wc_Sha256Update`/`wc_Sha256Final` - kein
+  Einzelaufruf-Wrapper in dieser Codebasis vorhanden) + Base64-ohne-
+  Padding der Fingerprint im selben `SHA256:...`-Format wie
+  `ssh-keygen -lf`.
+- Ein Base64-**Encoder** war neu (user_manager.c hatte bisher nur einen
+  Decoder fuer den SSH-Public-Key-Vergleich) - bewusst lokal in
+  ssh_manager.c, kein gemeinsames Utility-Modul (passt zum bisherigen
+  Muster dieser Codebasis, z.B. role_name() ist ebenfalls in mehreren
+  Komponenten dupliziert statt geteilt).
+
+Berechnung einmalig in `ssh_manager_init()` direkt nachdem der
+Host-Key-DER verfuegbar ist (geladen oder neu erzeugt), Ergebnis in
+zwei statischen Puffern gecacht (`ssh_manager_get_host_key_fingerprint()`
+/ `ssh_manager_get_host_public_key_line()`) - keine wiederholte
+Neuberechnung pro Seitenaufruf.
+
+## 2026-07-17 — Hinweis: erster Boot nach dem Flashen dauert laenger
+
+Auf Nutzerfrage ("dann wird der erste Start nach dem ersten Flash
+laenger dauern?"): ja, aus zwei voneinander unabhaengigen Gruenden, die
+beide **nur beim allerersten Boot** greifen (bzw. nach jedem Loeschen/
+Neuformatieren der `storage`-Partition, z.B. durch ein komplettes
+Neuflashen mit vorherigem Erase):
+
+1. `storage_manager_init()` (erster Aufruf in `app_main()`,
+   `firmware/main/main.c`) mountet LittleFS mit
+   `format_if_mount_failed = true` (`storage_manager.c`). Eine frisch
+   geflashte `storage`-Partition ist nicht formatiert -> der erste Mount
+   formatiert sie einmalig. Das blockiert `app_main()`, bevor
+   `usb_manager_init()` (und damit die `##ESPR`-Kommandoschnittstelle,
+   die z.B. `tools/Setup.ps1` benutzt) ueberhaupt startet.
+2. `ssh_manager_init()` (deutlich spaeter im Boot-Ablauf, nach
+   `web_server_manager_init()`/`snmp_manager_init()`) erzeugt beim
+   allerersten Mal einen neuen ECC-P256-Host-Key
+   (`generate_and_save_host_key()`, siehe SSH-Server (P7) oben) - reine
+   Software-Kryptografie (`NO_ESP32_CRYPT`), also nicht so schnell wie
+   mit Hardwarebeschleunigung, aber fuer P-256 (im Gegensatz zu RSA)
+   ohnehin im Bereich von Millisekunden bis niedrigen
+   Hundert-Millisekunden, keine grosse Verzoegerung fuer sich allein.
+   Blockiert nur `ssh_manager_init()` selbst, nicht den Rest des
+   Bootvorgangs (laeuft parallel zu nichts, aber auch nach nichts
+   Kritischem).
+
+Der dominante Faktor ist (1), nicht (2) - exakte Dauer nicht auf echter
+Hardware gemessen (noch kein Board vorhanden), da LittleFS-Formatierung
+groessenordnungsmaessig von der Flash-Loeschgeschwindigkeit abhaengt.
+Bei jedem weiteren Boot entfallen beide Schritte (Mount ohne Format,
+Host-Key wird nur geladen) - Bootzeit dann wie gewohnt.
+
+**Reaktion:**
+- `tools/Setup.ps1` wies bisher nur mit `Read-Host` zum manuellen
+  Wiederverbinden an, ohne auf diesen Umstand hinzuweisen, und versuchte
+  danach sofort einmalig zu verbinden (bei einem Timeout waere das
+  Skript direkt mit einer Exception abgebrochen). Jetzt: Hinweistext
+  beim Flash-Schritt + Retry-Schleife um den ersten Verbindungsversuch
+  (`Connect-EspBmc`, bis zu 10 Versuche, 2s Abstand) statt eines
+  einzelnen Versuchs, siehe `Connect-EspBmcWithRetry` in `Setup.ps1`.
+- Dieser Hinweis hier plus ein Kommentar direkt im Code
+  (`storage_manager.c`/`ssh_manager.c`) sind die "im Repo"-Doku-Seite
+  der Nutzeranforderung.
+
+Ergebnis: Real-Hardware-Env baut sauber, Flash 59,2 % (1.241.905 Byte,
++2.496 Byte gegenueber dem vorherigen P7-Stand), RAM 18,7 % (61.232
+Byte) - beides der erwartete kleine Zuwachs durch Base64-Encoder +
+Wire-Format-Aufbau, unkritisch.
+
+## 2026-07-17 — Watchdog-LED (RGB, GPIO48)
+
+Auslöser: beim Betrachten von `board mit bezeichner.bmp`
+(Projekt-Root, Pinout-Beschriftung des diymore-Boards) fiel eine
+onboard-adressierbare RGB-LED auf - laut Beschriftung "IO48_RGB: WS2812"
+an GPIO48, bis dahin von der Firmware nirgends verwendet. Nutzerwunsch:
+ein Watchdog, der diese LED Farben wechseln laesst, solange das System
+laeuft. **Wichtige Klarstellung im Gespraech**: gemeint ist die
+ESP-eigene Firmware/FreeRTOS, NICHT das Betriebssystem des gesteuerten
+Host-PCs (das war meine erste - falsche - Annahme und haette ein neues
+USB-Kommando plus ein separates PowerShell-Host-Skript gebraucht, das
+periodisch heartbeat sendet; nach der Korrektur entfaellt beides
+komplett).
+
+### Architektur: zwei Wirkungsebenen, nicht nur Deko
+
+Neue Komponente `watchdog_manager`. Eine einzelne, niedrig priorisierte
+FreeRTOS-Task (Prioritaet 2 - ueber Idle, aber unter allen
+Anwendungs-Tasks) schiebt alle 40ms den HSV-Farbton der LED um 2° weiter
+(voller Farbumlauf ≈ 7,2s) und tut zwei Dinge, die zusammen einen
+echten Watchdog ergeben statt nur eine Anzeige:
+
+1. **Sichtbares Lebenszeichen**: allein dass diese Task regelmaessig
+   drankommt, beweist, dass der Scheduler nicht durch eine andere Task
+   in einer Endlosschleife ohne Yield blockiert ist - ein Einfrieren
+   waere durch ein Einfrieren der LED sofort sichtbar.
+2. **Echte Selbstheilung**: die Task meldet sich zusaetzlich beim
+   ESP-IDF-eigenen Task Watchdog Timer an (`esp_task_wdt_add(NULL)`) und
+   fuettert ihn jeden Zyklus (`esp_task_wdt_reset()`). TWDT ist per
+   ESP-IDF-Standard bereits aktiv (`CONFIG_ESP_TASK_WDT_INIT=y`, 5s
+   Timeout, beide Idle-Tasks angemeldet), loest bei einem Timeout aber
+   standardmaessig NUR eine Log-Meldung aus
+   (`CONFIG_ESP_TASK_WDT_PANIC=n` per Default) - explizit auf
+   Panic+Reboot umgestellt (`CONFIG_ESP_TASK_WDT_PANIC=y`, alle drei
+   sdkconfig-Dateien). Der `app_main()`-eigene Endlos-Loop (1s-Zyklus,
+   siehe `main.c`) ist ebenfalls angemeldet.
+
+**Bewusst begrenzter Umfang** (Nutzer bestaetigte "Beides" auf die
+Rueckfrage nach Umfang, aber das heisst nicht *jede* Task): nur die
+neue Watchdog-Task selbst und der `app_main()`-Loop sind beim TWDT
+angemeldet - beide sind natuerliche, kurzzyklische Kandidaten ohne
+unbegrenzt blockierende Aufrufe. Bestehende Dauer-Tasks mit langen
+Schlafphasen (`sensor_manager`, 60s-Zyklus) oder unbegrenzt
+blockierenden Calls (`ssh_manager`s `accept()` in der Listen-Schleife)
+wurden bewusst NICHT angemeldet - das haette entweder eine Restrukturierung
+dieser Schleifen gebraucht (z.B. Socket-Timeout auf die Listen-Schleife,
+analog zum bereits bestehenden 200ms-Muster in `handle_session()`) oder
+haette zu Fehlalarmen gefuehrt. Ein "sauberer" Deadlock in einer dieser
+Tasks (blockiert auf einem Mutex/einer Queue, ohne CPU zu belegen) bleibt
+dadurch fuer die LED unsichtbar - abgedeckt ist Fall 1 (CPU-Monopolisierung
+durch eine andere Task) vollstaendig, Fall 2 (sauberer Einzeltask-Deadlock)
+nur fuer main/Watchdog-Task selbst. Ausweitung auf weitere Tasks ist mit
+demselben Muster (`esp_task_wdt_add`/`_reset` in der jeweiligen
+Schleife) jederzeit trivial nachruestbar, bewusst nicht in dieser Runde.
+
+### Bibliothek: espressif/led_strip, ein echter Bibliotheksfehler gefunden
+
+`espressif/led_strip` (^2.5, aufgeloest zu 2.5.5) ist die offizielle
+Managed Component fuer WS2812/SK6812 ueber RMT oder SPI. RMT-Variante
+gewaehlt (Standard fuer eine einzelne adressierbare LED, kein DMA
+noetig). API sehr klein: `led_strip_new_rmt_device()`,
+`led_strip_set_pixel_hsv()`, `led_strip_refresh()` - direkt aus den
+heruntergeladenen Headern uebernommen (gleiches Vorgehen wie bei
+wolfSSH: Header direkt lesen statt Web-Doku vertrauen).
+
+**Gefundener Fehler**: `src/led_strip_spi_dev.c` (Teil der Komponente,
+wird unabhaengig davon kompiliert, ob wir RMT statt SPI nutzen - die
+eigene CMakeLists.txt der Komponente bietet kein Kconfig-Flag zum
+Abschalten des SPI-Backends) verwendet
+`MALLOC_CAP_DEFAULT`/`MALLOC_CAP_INTERNAL`/`MALLOC_CAP_DMA`/
+`heap_caps_calloc`, bindet aber `esp_heap_caps.h` nirgends ein - baut
+nicht gegen unsere Toolchain (GCC 15.2.0). Echter, kleiner
+Bibliotheksfehler (Version 2.5.5 ist die aktuellste im Registry, kein
+Fix im Changelog erwaehnt). Gleiches Patch-Muster wie beim
+wolfssl-`thread_local`-Fix: idempotenter CMake-Schritt in
+`firmware/CMakeLists.txt` (fuegt `#include "esp_heap_caps.h"` ein,
+falls noch nicht vorhanden) statt Hand-Patch, da der Component-Manager
+`managed_components` bei jeder Neukonfiguration aus dem Cache
+wiederherstellt und einen einmaligen Patch sonst wieder umwuerfe.
+
+### Nebenbefund: GCC-Interner-Compiler-Fehler unter Volllast (nicht code-bezogen)
+
+Ein sauberer `rm -rf .pio/build` + paralleler Build brach zweimal in
+Folge deterministisch am selben Punkt mit einem GCC-Absturz
+("internal compiler error: Segmentation fault", "during RTL pass: ira")
+in `esp_lcd_panel_rgb.c` ab - einer Espressif-Kerndatei fuer den
+RGB-LCD-Treiber, den dieses Projekt gar nicht nutzt (kein LCD verbaut).
+Nichts in unserem Code oder unseren Abhaengigkeiten fordert diese Datei
+an - PlatformIOs ESP-IDF-Integration baut anders als `idf.py` grosszuegig
+den gesamten Komponentenbaum mit, unabhaengig von tatsaechlicher
+Verwendung. Ein anschliessender **single-threaded** Build (`pio run -j
+1`) lief fehlerfrei durch - der ICE ist also ressourcendruckbedingt
+(vermutlich Speicherdruck durch mehrere parallele `cc1`-Prozesse unter
+Ninjas Standard-Parallelitaet auf dieser Maschine), kein deterministischer
+Code-Fehler. Kein dauerhafter Workaround eingebaut (z.B. eine
+Compile-Flag-Absenkung nur fuer diese eine Datei) - das waere Aufwand
+fuer ein Problem in Code, den wir nicht nutzen. Falls das erneut
+auftritt: `pio run -e <env> -j 1` als Fallback, siehe Projekt-Memory.
+
+### Ergebnis
+
+Real-Hardware-Env baut sauber (nach dem oben beschriebenen
+Parallelitaets-Nebenbefund), Flash 60,4 % (1.266.069 Byte, +24.164 Byte
+gegenueber dem Host-Key-Fingerprint-Stand - der led_strip-Treiber plus
+die neue Task sind deutlich groesser als der reine Fingerprint-Code),
+RAM 18,8 % (61.648 Byte). Wokwi-Sim nicht gebaut (weiterhin auf
+Nutzerwunsch pausiert). Nicht auf echter Hardware getestet - wie
+ueblich bis ein Board vorhanden ist.
+
+## 2026-07-17 — Benachrichtigungswege: Syslog + SMTP ohne TLS
+
+Pflichtenheft Abschnitt 12, letzter noch offener Punkt der urspruenglichen
+Entscheidungsliste ("Versandweg Benachrichtigungen"): Kosten/Nutzen von
+fuenf Kandidaten grob geschaetzt (SNMP-Trap, Syslog, MQTT, HTTPS-Webhook,
+SMTP+TLS) - Kernbefund dabei: `esp-tls` (ESP-IDFs eigene HTTP/MQTT-Client-
+Infrastruktur) hat in dieser ESP-IDF-Version **kein wolfSSL-Backend**, nur
+mbedTLS - jeder TLS-Weg ueber die Standard-Clients haette also einen
+**zweiten, vollstaendigen Krypto-Stack** neben dem schon vorhandenen
+wolfSSL (SSH, siehe "SSH-Server (P7)") gebraucht, grob geschaetzt +100-200
+KB. Entscheidung: **Syslog (UDP) + SMTP OHNE TLS** - beide brauchen keinen
+Krypto-Stack, bewusster Kompromiss (Klartext-SMTP funktioniert nur mit
+einem vertrauenswuerdigen internen Relay/Smarthost, nicht mit oeffentlichen
+Providern wie Gmail, die TLS erzwingen).
+
+### Architektur
+
+Neue Persistenz in `notification_manager` (`/storage/notify.json`,
+gleiches JSON-Muster wie config_manager/snmp_manager): Syslog-Server+Port
+und SMTP-Server+Port+Absender+Benutzername+Passwort, ueber die
+Einstellungen-Seite (Verwalter+) konfigurierbar, neue Karte
+"Benachrichtigungen". Beide Wege unabhaengig optional (leerer Server =
+aus). SMTP-Passwort wird der Einstellungen-Seite **nie** zurueckgegeben
+(`notification_manager_get_smtp()` liefert es bewusst nicht) - ein leeres
+Passwort-Feld im Formular bedeutet "unveraendert lassen"
+(`notification_manager_set_smtp()` uebernimmt ein leeres Passwort nicht).
+
+E-Mail-Empfaenger sind Sache der einzelnen Benutzerkonten, nicht der
+globalen Konfiguration (Nutzerwunsch: "E-Mail Adresse speichern wir bei
+jedem Benutzer, mit einer Checkbox Benachrichtigung aktiv") -
+`user_manager` gewann zwei neue Felder (`email`, `notify_enabled`),
+Selbstbedienung auf der Uebersichtsseite (neue Karte
+"E-Mail-Benachrichtigung", `/account/notify`) analog zum SSH-Key, aber
+OHNE Rollenbeschraenkung (jede Rolle darf ihre eigene Adresse pflegen).
+Eine aktivierte Benachrichtigung ohne (plausible) Adresse wird abgelehnt
+(`looks_like_email()` - nur eine Tippfehler-Bremse, keine vollstaendige
+RFC-5322-Pruefung).
+
+### SMTP-Client: von Hand ueber einen rohen TCP-Socket
+
+Kein fertiger SMTP-Client in ESP-IDF - Protokollablauf (EHLO, optional
+AUTH LOGIN, MAIL FROM, RCPT TO, DATA, QUIT) von Hand implementiert.
+Antworten koennen mehrzeilig sein (250-erste\r\n250 letzte\r\n) - am 4.
+Zeichen einer Zeile erkennbar ('-' = es folgt noch eine Zeile, ' ' =
+letzte). AUTH LOGIN braucht Base64 (neuer, eigener Encoder - der aus
+ssh_manager.c wird nicht geteilt, siehe die dortige Begruendung fuer
+bewusste kleine Duplizierung statt eines gemeinsamen Utility-Moduls).
+`getaddrinfo()` (neu fuer dieses Projekt) loest sowohl Hostnamen als auch
+rohe IP-Adressen auf, gemeinsam fuer Syslog (UDP) und SMTP (TCP)
+verwendet.
+
+### Alarm-Flut verhindert: flankengetriggert statt Zyklus-getriggert
+
+Vorher loeste `notification_manager_trigger()` nur ein Log-Statement aus
+- eine Wiederholung alle 60s (SensorTask-Zyklus) waehrend einer
+anhaltenden Schwellwert-Ueberschreitung war harmlos. Mit echtem Versand
+waere das eine E-Mail/Syslog-Nachricht alle 60s auf unbestimmte Zeit -
+ein echtes Problem, das beim Bauen aufgefallen ist (nicht explizit vom
+Nutzer verlangt, aber eine notwendige Ergaenzung fuer sinnvolles
+Verhalten). Fix in `sensor_manager.c`: `check_threshold()` bekam einen
+`was_breached`-Zustand pro Messgroesse (NTC-Temperatur/DHT11-Temperatur/
+DHT11-Luftfeuchte je eigenes `static bool`) - ausgeloest wird nur beim
+Uebergang von "unter Schwellwert" zu "drueber", nicht bei jedem Zyklus
+waehrend der Wert oben bleibt. Wird erst wieder scharf, wenn der Wert
+zurueck unter den Schwellwert faellt.
+
+### Synchron/blockierend, kein eigener Versand-Task
+
+SMTP-Versand (TCP-Connect + mehrere Roundtrips, 5s-Timeout pro
+Socket-Operation) laeuft synchron im aufrufenden SensorTask - blockiert
+dessen 60s-Zyklus fuer die Dauer des Versands (mehrere Sekunden bei
+mehreren Empfaengern). Bewusst keine eigene Versand-Queue/-Task dafuer
+gebaut - der SensorTask hat ohnehin ein 60s-Intervall, ein paar Sekunden
+Verzoegerung beim Alarmversand sind unkritisch, die Komplexitaet einer
+asynchronen Warteschlange stand in keinem Verhaeltnis zum Nutzen hier.
+
+### `was loggen.txt`-Luecke geschlossen
+
+"alert temp dht"/"alert temp 10K B3590" waren in `was loggen.txt` schon
+lange gefordert, aber nie ans Audit-Log angebunden (nur `ESP_LOGW`,
+keine Persistenz) - `notification_manager_trigger()` ruft jetzt zusaetzlich
+`audit_log_add()` auf, unabhaengig davon ob ueberhaupt ein Versandweg
+konfiguriert ist.
+
+### Ergebnis
+
+Real-Hardware-Env baut sauber nach zwei Format-Truncation-Fixes
+(`notify_card`-Puffer 512->640 Byte, Einstellungen-Seiten-Puffer
+9216->12288 Byte - beide durch die zusaetzlichen Formularfelder
+ausgeloest, gleiche Ursache wie die wiederholt aufgetretenen
+format-truncation-Warnungen bei fruaheren Formular-Ergaenzungen). Flash
+60,8 % (1.275.217 Byte, +9.148 Byte gegenueber dem Watchdog-LED-Stand),
+RAM 19,2 % (63.024 Byte). Nicht auf echter Hardware/gegen einen echten
+SMTP-/Syslog-Server getestet - wie ueblich bis ein Board vorhanden ist.
+
+Bewusst nicht umgesetzt:
+- Kein STARTTLS-Upgrade-Pfad fuer SMTP (bewusste Entscheidung gegen
+  TLS, siehe oben - ein Nachruesten waere ein groesserer Umbau, kein
+  kleiner Zusatz).
+- Kein Dot-Stuffing in der SMTP-DATA-Phase (falls eine Zeile mit "."
+  beginnt, wuerde das DATA vorzeitig beenden) - fuer die aktuell einzige,
+  programmatisch erzeugte, garantiert nicht mit "." beginnende
+  Alarmzeile kein praktisches Risiko, waere aber vor einer Erweiterung
+  auf freien Nutzertext noetig.
+- Keine Wiederholungsversuche bei fehlgeschlagenem Versand (Verbindung
+  down, Server nicht erreichbar) - ein Fehlschlag wird geloggt, nicht
+  erneut versucht.
+
+### Nachtrag 2026-07-17 (spaeter): E-Mail-Entprellung (Zaehler + Timer) + Sammel-Mail statt Mail pro Empfaenger
+
+Auf Nutzerhinweis: viele SMTP-Server/Relays begrenzen auf ca. 10
+Mails/Stunde - ohne Bremse haette eine Haeufung von Schwellwert-Alarmen
+(mehrere Messgroessen kurz hintereinander, trotz der Flankentriggerung
+aus dem vorherigen Eintrag) dieses Kontingent schnell aufgebraucht.
+Zwei Aenderungen:
+
+**1. Eine Mail fuer alle Empfaenger statt eine Mail pro Empfaenger.**
+`smtp_send_all()` ersetzt das bisherige `smtp_send_one()`-in-einer-
+Schleife-Muster: eine einzige SMTP-Verbindung, ein `MAIL FROM`, aber ein
+`RCPT TO` je aktiviertem Empfaenger (Umschlag-Ebene - so liefert der
+Server trotzdem an jeden einzeln aus), und alle Adressen sichtbar im
+`Cc:`-Header (`To:` zeigt den Absender selbst, da kein einzelner
+Haupt-Empfaenger vorgesehen ist). Ein einzelner abgelehnter Empfaenger
+(z.B. Tippfehler in der Adresse) bricht nicht den gesamten Versand ab,
+wird nur geloggt - die anderen RCPT TO/die Mail selbst laufen weiter.
+Reduziert das Mail-Aufkommen pro Alarm sofort von N (eine je Empfaenger)
+auf 1, unabhaengig von der Entprellung unten.
+
+**2. Zaehler + Zeitfenster, mit einer Timer-Task gekoppelt (Nutzervorgabe
+woertlich: "counter mit einem timer koppeln").** Neuer Zustand in
+`notification_manager.c`: ein 60-Minuten-Fenster (`s_window_start_us`),
+ein Zaehler bereits versendeter Mails darin, ein "sammelt gerade"-Schalter
+und ein Text-Puffer fuer gesammelte Meldungen (1 KB, mit
+Ueberlauf-Zaehler statt Absturz/Abschneiden ohne Hinweis). Ablauf pro
+Alarm (`notify_email()`):
+- Die ersten 4 Mails eines Fensters gehen sofort raus (`smtp_send_all()`
+  direkt aufgerufen).
+- Wird eine 5. Mail noetig, **und** das Fenster ist noch keine 50 Minuten
+  alt: ab jetzt wird gesammelt statt einzeln versendet
+  (`append_to_digest()`) - keine weitere Mail, bis der Digest verschickt
+  wird.
+- Wird eine 5. Mail erst NACH Minute 50 noetig: das Fenster ist ohnehin
+  fast vorbei, normal sofort senden (kein Sammeln fuer die letzten paar
+  Minuten eines Fensters).
+- Waehrend gesammelt wird, landet jede weitere Meldung nur noch im
+  Digest-Puffer, nie als Einzelmail.
+
+Der eigentliche **Timer**-Teil: eine neue leichte FreeRTOS-Task
+(`digest_flush_task`, Prioritaet 1, alle 30s Poll) prueft unabhaengig von
+neuen Alarmen, ob Minute 59 des Fensters erreicht ist, und verschickt
+dann genau eine Sammel-Mail mit allen bis dahin aufgelaufenen Meldungen
+(`flush_digest()`). Das ist bewusst NICHT rein ereignisgetrieben (nur
+beim naechsten Alarm pruefen) - sonst wuerde der Digest nie verschickt,
+falls nach dem Start des Sammelns zufaellig kein weiterer Alarm mehr
+eintrifft (z.B. genau 5 Alarme, dann bleibt alles ruhig - ohne die
+Timer-Task blieben die gesammelten Meldungen fuer immer unversendet im
+RAM liegen). Maximal 5 Mails pro Fenster im Extremfall (4 sofort + 1
+Digest), komfortabel unter dem 10/Stunde-Server-Limit - selbst mit
+Reserve fuer den Fall, dass der Server sein Fenster nicht exakt
+deckungsgleich mit unserem 60-Minuten-Fenster zaehlt.
+
+Syslog ist von der Bremse bewusst ausgenommen (UDP, kein Server-
+Kontingent-Problem, "fire and forget") - jeder Alarm erzeugt weiterhin
+sofort ein Syslog-Paket, unabhaengig vom E-Mail-Sammelzustand.
+
+**Nebenaenderung, durch die Sammel-Mail noetig geworden**: der SMTP-Body
+konnte bisher nur eine einzelne Zeile sein (`smtp_send_line()` direkt
+mit dem ganzen Body aufgerufen). Eine Sammel-Mail hat mehrere
+Zeilen (eine je gesammelter Meldung) - neue `smtp_send_body_lines()`
+zerlegt den Body an "\n" und sendet jede Zeile einzeln mit korrektem
+CRLF, statt den mehrzeiligen Text als eine "Zeile" misszuverstehen.
+
+Ergebnis: Real-Hardware-Env baut sauber (ein GCC-ICE-Ausreisser beim
+parallelen Clean-Build, siehe "Watchdog-LED"-Eintrag - Retry lief
+sauber durch), Flash 60,9 % (1.277.137 Byte, +1.920 Byte gegenueber dem
+vorherigen Benachrichtigungswege-Stand), RAM 19,5 % (64.048 Byte).
+Nicht auf echter Hardware getestet.
+
+## 2026-07-18 — Portierbarkeit auf ESP32-S3-DevKitC-1-N8R8
+
+Auf Nutzerfrage: passt der aktuelle Funktionsumfang groessenmaessig auch
+auf die kleinere N8R8-Variante des Boards (8 statt 16 MB Flash, PSRAM bei
+beiden identisch 8 MB - nur das "N16"/"N8"-Praefix unterscheidet sich)?
+
+Kurz nachgerechnet statt geraten: `partitions.csv` summiert sich auf
+`0x510000` Byte ≈ 5,06 MB (nvs 20K + otadata 8K + 2× 2-MB-OTA-Slot + 1-MB-
+Storage) - passt unveraendert unter 8 MB (`0x800000`), es bleiben ≈2,94 MB
+ungenutzt (gegenueber ≈10,9 MB auf der 16-MB-Variante). Die einzelne
+App-Partition (2-MB-OTA-Slot, aktuell 60,9 % ausgelastet) aendert sich
+durch den Boardwechsel gar nicht - deren Groesse haengt nur von der
+Partitionstabelle ab, nicht vom Gesamt-Flash. PSRAM-Konfiguration
+(`CONFIG_SPIRAM_MODE_OCT` etc.) bleibt unveraendert gueltig, da N8R8
+dasselbe Octal-8-MB-PSRAM hat wie N16R8.
+
+**Entscheidung**: neue PlatformIO-Env `esp32-s3-devkitc-1-n8r8` angelegt,
+die ab jetzt parallel zur bestehenden N16R8-Env mitgebaut/mitgepflegt
+wird (kein einmaliger Wegwerf-Test) - kein eigenes N8R8-Board vorhanden,
+genau wie beim P1-WireGuard-Spike geht es hier nur um
+Kompilierbarkeit/Fussabdruck-Tracking, nicht um einen tatsaechlichen
+Flash-Vorgang. `platformio.ini`: `extends = env:esp32-s3-devkitc-1-n16r8`
+mit `board_upload.flash_size = 8MB` ueberschrieben - `partitions.csv`
+selbst bleibt unangetastet (identisch fuer beide Boardgroessen). Die
+eigentliche Flashgroessen-Kconfig-Auswahl (`CONFIG_ESPTOOLPY_FLASHSIZE_*`
+ist ein Kconfig-"choice", nur eine Option kann aktiv sein) wird ueber
+eine neue `sdkconfig.defaults.esp32-s3-devkitc-1-n8r8` auf 8 MB
+umgeschaltet - gleiches Merge-Muster wie `sdkconfig.defaults.wokwi-sim`
+(PlatformIO fuegt `sdkconfig.defaults.<env>` zusaetzlich zur
+gemeinsamen `sdkconfig.defaults` hinzu, kconfgen versteht Choice-Gruppen
+beim Zusammenfuehren korrekt - kein manuelles "is not set" fuer die
+16-MB-Option noetig).
+
+Ergebnis: baut sauber, Flash 60,9 % (1.277.089 Byte), RAM 19,5 % (64.048
+Byte) - praktisch identisch zur N16R8-Env (die winzige Differenz kommt
+vermutlich aus einer flashgroessenabhaengigen Konstante irgendwo im
+Bootloader/Linkerskript). Drei Envs jetzt insgesamt:
+`esp32-s3-devkitc-1-n16r8` (echtes Board), `esp32-s3-devkitc-1-n8r8`
+(kein Board, nur Fussabdruck-Tracking), `wokwi-sim` (Simulation, nur
+nach Nutzerfreigabe). **Standing Convention ab jetzt**: bei jedem
+"echten Build zur Verifikation" beide Nicht-Wokwi-Envs bauen, nicht nur
+n16r8 - siehe Projekt-Memory.
+
+### Nachtrag 2026-07-18: automatische Varianten-Erkennung vor dem Flashen
+
+Auf Nutzerfrage: kann man vor dem Flashen abfragen, welche Hardware-
+Variante (N16R8 vs. N8R8) tatsaechlich angeschlossen ist, statt sich auf
+einen von Hand gewaehlten Parameter zu verlassen? Ja - `esptool.py
+flash_id` spricht den ROM-Bootloader direkt an (kein vorheriges
+Firmware-Image noetig, funktioniert also auch auf einem leeren/
+unbekannten Chip) und gibt u.a. eine Zeile "Detected flash size: 8MB"
+aus - exakt dasselbe String-Format ("8MB"/"16MB") wie
+`board_upload.flash_size` in `platformio.ini`, praktischerweise direkt
+weiterverwendbar ohne Umrechnung. PSRAM-Groesse laesst sich dagegen NICHT
+vorab abfragen (das ist reine Laufzeit-/Firmware-Erkennung beim Boot,
+kein ROM-Bootloader-Feature) - spielt hier aber keine Rolle, da N16R8
+und N8R8 identisches PSRAM haben (nur die Flash-Groesse unterscheidet
+sich, siehe Eintrag oben).
+
+Neue Funktionen in `tools/EspBmcLink.psm1`: `Get-EspBmcFlashSize` (ruft
+`~/.platformio/packages/tool-esptoolpy/esptool.py flash_id` ueber
+PlatformIOs eigenes venv-Python auf, `-Port` optional - ohne Port sucht
+esptool selbst, gleiches Auto-Erkennungsverhalten wie `pio run -t
+upload`, das ebenfalls nie einen expliziten Port braucht) und
+`Resolve-EspBmcEnvironment` (bildet die erkannte Groesse auf den
+passenden Env-Namen ab, `$null` bei einer unbekannten Groesse).
+
+`tools/Setup.ps1` nutzt beides vor dem Flash-Schritt: wurde `-EnvName`
+NICHT explizit vom Nutzer angegeben, wird automatisch auf die erkannte
+Umgebung umgeschaltet. Wurde `-EnvName` explizit angegeben, wird das
+respektiert (nur eine Warnung bei einer Abweichung, kein Ueberschreiben -
+der Nutzer koennte bewusst einen Sonderfall testen wollen). Schlaegt die
+Erkennung fehl (kein Geraet verbunden, esptool.py nicht gefunden,
+unbekannte Chipgroesse) wird nur gewarnt und mit dem bisherigen
+Standardverhalten fortgefahren - rein informativ/best-effort, kein
+Abbruch des Flash-Vorgangs.
+
+PowerShell-Syntax geprueft (Parser-Check, kein Laufzeitfehler), und die
+esptool-Kommandozeile (`esptool.py --port <port> flash_id`,
+`DETECTED_FLASH_SIZES`-Werteformat "8MB"/"16MB") direkt gegen die im
+Projekt gebundelte esptool.py-Version (v4.11.0) verifiziert statt nur
+angenommen. Nicht gegen echte Hardware getestet - kein Board vorhanden.
+
+## 2026-07-18 — Verdrahtungsplan final + Pinbelegung fixiert
+
+Auf Nutzerwunsch: kompletter Neuaufbau von `docs/verdrahtungsplan.html`
+(vorher ein 68-KB-Base64-Foto-Overlay mit generischen "ESP-Eingang"/
+"ESP-Ausgang"-Beschriftungen ohne echte Pin-Nummern) - jetzt ein reines
+SVG/HTML-Dokument (keine eingebetteten Fotos mehr, 42 statt 93 KB,
+deutlich wartbarer), zwei interaktiv umschaltbare Ausbaustufen fuer die
+Taster-Weiterleitung, vollstaendige 44-Pin-Referenztabelle, USB-Port-
+Zuordnung, ATX-+5VSB-Alternativversorgung, Dual-Powering-Warnung.
+
+### Pinbelegung final: die bisherigen Wokwi-Platzhalter waren schon korrekt
+
+Cross-Check der 10 bereits im Code verwendeten GPIOs (`gpio_manager.h`:
+4/5/6/7/15/16/17/18, `sensor_manager.h`: 1/2, plus GPIO48 fuer die
+Watchdog-LED) gegen die Vendor-Pinout-Bilder und die ESP32-S3-
+Strapping-/JTAG-/UART-/USB-Pins (0, 3, 39-46) ergab: **keine einzige
+Kollision** - die urspruenglich "AUSDRUECKLICH PROVISORISCH" nur fuer
+Wokwi gedachten Werte waren die ganze Zeit schon gueltig fuer das echte
+Board. Kommentare in beiden Headern entsprechend aktualisiert (nicht
+mehr "Platzhalter", sondern "final festgelegt, gegen Vendor-Bilder +
+ESP-IDF-SoC-Header abgeglichen, noch nicht auf Hardware verifiziert").
+Schliesst den letzten offenen Punkt aus Pflichtenheft Abschnitt 12
+("GPIO-Pinbelegung ... noch offen").
+
+### USB-Port-Zuordnung + ein gefundener Vendor-Beschriftungsfehler
+
+Port-Zuordnung (welcher der beiden USB-C-Anschluesse Flash/UART vs.
+natives USB ist) nur mit **mittlerem Vertrauen** aus Fotos bestimmt (Lage
+des Bridge-Chips relativ zu den Ports auf `docs/board-foto.jpg`) - explizit
+im Dokument als vor dem ersten Einsatz zu verifizieren markiert, kein
+Silkscreen-Aufdruck gefunden, der es eindeutig bestaetigt.
+
+Waehrend der Recherche ein echter Fehler in der Vendor-Pinout-Grafik
+gefunden: die Bilder beschriften `GPIO21=USB_D+, GPIO20=USB_D-` - ein
+Blick in ESP-IDFs eigenen SoC-Header
+(`components/soc/esp32s3/include/soc/usb_pins.h`:
+`USBPHY_DP_NUM=20, USBPHY_DM_NUM=19`) zeigt, dass das vertauscht/falsch
+ist: D+ ist tatsaechlich GPIO20, D- ist GPIO19, und GPIO21 hat mit
+nativem USB gar nichts zu tun (bleibt frei nutzbar). Der ESP-IDF-Header
+ist hier die verlaessliche Quelle (fest im Silizium verdrahtet, nicht
+vendor-abhaengig) - im Dokument als Korrektur zur Vendor-Beschriftung
+festgehalten, nicht die Fotos blind uebernommen. Gleiches Prinzip wie
+schon bei der Sensormeter-Familie ("GPIO16 IST auf dem Header ... Datenblatt
+statt Foto-Lesen").
+
+### Sicherheitsluecke geschlossen: Spannungsteiler fuer LED-Erfassung
+
+Lastenheft 10.1 nannte fuer die Power-/HDD-LED-Erfassung "kein
+zusaetzliches Bauteil" - das stimmt nur, wenn der Mainboard-Header
+sicher auf 3,3 V referenziert ist. Viele Mainboards ziehen ihre
+Front-Panel-LED-Header aber auf 5 V hoch, was den absoluten Grenzwert
+eines ESP32-S3-GPIO (3,3 V + 0,3 V) ueberschreiten kann - ein bislang
+unbemerkter Luecke (in `docs/bom.md` schon als "noch offen/zu klaeren"
+vermerkt, aber nie geschlossen). Jetzt ergaenzt: 10 kΩ/20 kΩ-
+Spannungsteiler pro Kanal, ergibt 3,33 V bei 5 V Eingang (sicherer
+Abstand zum 3,6-V-Abs.-Max.), bei einem bereits 3,3-V-referenzierten
+Header weiterhin unschaedlich (liefert dann nur ~2,2 V, noch sicher als
+"High" erkennbar). `docs/bom.md` entsprechend erweitert (#6b).
+
+### Zwei Ausbaustufen fuer die Taster-Weiterleitung, "mit Optokoppler" empfohlen
+
+Lastenheft 10.3 fordert PC817 auf beiden Weiterleitungskanaelen -
+trotzdem beide Varianten dokumentiert (Nutzerwunsch), mit klarer
+Kennzeichnung der optokoppler-Variante als empfohlen, nicht
+gleichwertig:
+- **Ohne Optokoppler**: NPN-Transistor (BC547/2N2222) + 1-kΩ-
+  Basiswiderstand pro Kanal als einfacher Schalter - bewusst kein
+  blanker GPIO-Draht direkt zum Header (5-V-Ueberspannungsrisiko wie
+  beim LED-Sense-Fall oben), aber Mainboard-GND und ESP-GND werden dabei
+  elektrisch verbunden, keine Trennung.
+- **Mit Optokoppler (empfohlen)**: PC817 pro Kanal (deckt sich mit
+  `docs/bom.md` #5/#6), Fototransistor-Seite ueberbrueckt die
+  Mainboard-Header-Pins komplett getrennt vom ESP-GND.
+- Begruendung fuer die Empfehlung ueber die reine Lastenheft-Vorgabe
+  hinaus: die Trennung bleibt auch dann sinnvoll, wenn ESP und Mainboard
+  ohnehin dieselbe Stromquelle teilen (ATX +5VSB desselben PCs, siehe
+  unten) - sie begrenzt einen Verdrahtungsfehler auf einen 30-Cent-
+  Optokoppler statt auf den GPIO oder einen daran haengenden
+  USB-Host-Rechner.
+
+### Alternative Stromversorgung: ATX +5VSB + Dual-Powering-Warnung
+
+Neue Anforderung (nicht vorher in Lasten-/Pflichtenheft), damit der
+ESP-BMC auch bei vollstaendig ausgeschaltetem PC weiterlaeuft (Voraus-
+setzung fuer Fern-Einschalten ueberhaupt). ATX-24-Pin Pin 9 (+5VSB,
+violett) + eine COM/GND-Ader (schwarz) auf die Header-Pins `5Vin`/`GND`
+- nicht ueber einen USB-Port.
+
+Prominent herausgestellt: **Dual-Powering-Gefahr**. 5Vin und beide
+USB-VBUS-Anschluesse liegen intern auf demselben 5V-Netz - zwei aktive
+Quellen gleichzeitig (z.B. ATX +5VSB an 5Vin UND ein USB-Kabel zu einem
+eingeschalteten Host gleichzeitig an einem der beiden Ports) speisen
+unkoordiniert ein, ohne Power-ORing-Schaltung kann Strom in die jeweils
+andere Quelle zurueckfliessen - moegliche Folgen: beschaedigter
+USB-Host-Controller, beschaedigte ATX-Standby-Regelung, oder eine
+undefinierte Spannung auf dem Board-eigenen 5V-Netz. Regel im Dokument:
+nie beide gleichzeitig, USB-Kabel vor dauerhaftem ATX-Betrieb abziehen;
+eine Schottky-Dioden-ODER-Schaltung als Option genannt, aber bewusst
+nicht mitgeliefert (kein bekannter Anwendungsfall dafuer).
+
+### Ergebnis
+
+`docs/verdrahtungsplan.html` neu aufgebaut (JS-Syntax mit `node -e`
+geprueft, HTML-Tag-Balance verifiziert - beides nach einem echten Fund:
+ein erster Entwurf hatte drei JS-String-Literale mit einem
+unausgewichenen ASCII-Anfuehrungszeichen mitten im String, das den
+String vorzeitig beendet und einen Syntaxfehler ausgeloest haette,
+gefixt durch passende typografische Anfuehrungszeichen). `gpio_manager.h`/
+`sensor_manager.h`-Kommentare aktualisiert, `docs/bom.md` um die zweite
+Ausbaustufe + Spannungsteiler + ATX-Anzapfkabel erweitert,
+`docs/projektstand.md`s GPIO-Pinbelegungs-Zeile auf entschieden
+umgestellt. Beide Firmware-Envs (n16r8 + n8r8, neue Standing Convention)
+nach den reinen Kommentar-Aenderungen sauber neu gebaut. Nicht auf
+echter Hardware getestet - kein Board vorhanden.
+
+## 2026-07-18 — OTA-Update im Webinterface, Identitaets-/Downgrade-Pruefung wie bei der Sensormeter-Familie
+
+Auf Nutzerwunsch: lokaler .bin-Upload ueber die Einstellungen-Seite,
+Admin-only, mit demselben Identitaets-/Downgrade-Pruefungsmuster wie die
+Sensormeter-Familie (`OtaManager.cpp`/`.h` dort) - Implementierung dort
+direkt studiert statt aus der Erinnerung rekonstruiert, um den dort
+bereits gefundenen und behobenen Fehler von vornherein zu vermeiden statt
+ihn erst selbst wiederzuentdecken.
+
+### Erste Beta: Versionsnummer wie bei sm
+
+Neue Datei `firmware/components/firmware_version/include/firmware_version.h`:
+`FIRMWARE_PROJECT_ID "ESP-BMC"`, `DEVICE_FIRMWARE_VERSION "0.9.0-rc4"` -
+exakt dieselbe Versionsnummer wie die Sensormeter-Familie aktuell
+(Nutzervorgabe: "diese Firmware wird unsere erste Beta, gleiche Version
+wie bei sm setzen") - beide Projekte bleiben trotzdem unabhaengig
+versioniert, keine gemeinsame Release-Klammer, nur zufaellig derselbe
+Stand. Eigene kleine Komponente statt eines Headers unter `main/`, damit
+`ota_manager` (siehe unten) sie ohne unschoenen relativen
+Include-Pfad/Zirkelbezug zu `main` erreichen kann.
+
+### Marker-Format bewusst NICHT deckungsgleich mit Sensormeter
+
+Sensormeter nutzt "SM-FW-ID:...:SM-FW-END". Fuer ESP-BMC bewusst ein
+eigenes, nicht-ueberlappendes Format gewaehlt: "ESPBMC-FW-ID:...:ESPBMC-FW-END".
+Grund: "FW-ID:" waere als generischer, kuerzerer Praefix ein Teilstring
+von Sensormeters "SM-FW-ID:" gewesen (ebenso ":FW-END" ein Teilstring von
+":SM-FW-END") - ein Scan nach dem kuerzeren Muster haette in einer
+tatsaechlichen Sensormeter-.bin faelschlich einen Treffer gefunden und
+"SENSORMETER" als (falsche) Projekt-ID eingelesen, was die ganze
+Schutzfunktion (Verwechslung zwischen Schwesterprojekten verhindern)
+untergraben haette. Mit den vollstaendig unterschiedlichen Praefixen/
+Suffixen ist das ausgeschlossen (keine Teilstring-Beziehung in beide
+Richtungen, nachgeprueft).
+
+### Der eigentliche Punkt: von Anfang an byte-sicher, nicht erst nach einem eigenen Vorfall
+
+Sensormeters `OtaManager` scannt den Byte-Stream waehrend des Uploads
+nach dem Marker - urspruenglich mit `String::indexOf()` (Arduino), das
+intern auf `strstr()` basiert und am ersten eingebetteten Null-Byte
+abbricht. Eine echte ESP32-.bin enthaelt bereits ab Byte 9 (im
+Image-Header) Null-Bytes - der Marker wurde dadurch in der Praxis NIE
+gefunden, jeder echte Firmware-Upload wurde faelschlich als "kein
+Erkennungsmerkmal" abgelehnt, bis der Fehler bei Sensormeter gefunden und
+auf einen handgeschriebenen `memcmp`-basierten `findBytes()`
+umgeschrieben wurde (siehe deren docs/entscheidungen.md).
+
+Fuer ESP-BMC direkt mit dem korrigierten Muster gebaut (`find_bytes()` in
+`ota_manager.c`, `memcmp`-basiert, byte-sicher) - kein `strstr()`/keine
+C-String-Funktion kommt beim Marker-Scan ueberhaupt in Beruehrung mit den
+Binaerdaten. Gleiches Tail-Puffer-Prinzip wie Sensormeter (Praefix/Suffix
+koennen an einer Chunk-Grenze zerschnitten sein, `s_tail_buf`/
+`s_capture_buf`).
+
+### Downgrade-Vergleich: identisches a.b.c[-rcN]-Schema
+
+`compare_versions()`/`parse_version()` in `ota_manager.c` sind eine
+direkte C-Portierung von Sensormeters `compareVersions()`/
+`parseVersion()` (kein vollstaendiger Semver-Parser, kein Build-
+Metadaten-"+...", deckt aber das hier genutzte Schema ab) - bei
+gleicher a.b.c-Kernversion hat "kein Suffix" Vorrang vor "mit Suffix"
+(ein Release gilt als neuer als jede eigene Vorabversion), bei zwei
+Suffixen entscheidet der lexikografische Vergleich ("rc3" < "rc4").
+
+### ESP-IDF-natives OTA statt Arduino-`Update`-Bibliothek
+
+Sensormeter nutzt Arduino-ESP32s `Update`-Klasse
+(`Update.begin()/write()/end()`). ESP-BMC ist reines ESP-IDF - direktes
+Aequivalent ist `esp_ota_ops.h`
+(`esp_ota_get_next_update_partition()`, `esp_ota_begin()`,
+`esp_ota_write()`, `esp_ota_end()`, `esp_ota_abort()`,
+`esp_ota_set_boot_partition()`) - nutzt dieselbe `ota_0`/`ota_1`-
+Partitionsstruktur, die seit der P0-Partitionstabellen-Entscheidung schon
+vorhanden, aber nie tatsaechlich verdrahtet war.
+
+### Kein eingebauter Multipart-Parser in esp_http_server - von Hand geloest
+
+Sensormeter nutzt ESPAsyncWebServer, das Multipart-Formulare eingebaut
+zerlegt (inkl. eines Textfelds - der "Downgrade erzwingen"-Checkbox - VOR
+dem Datei-Feld im selben Formular). ESP-IDFs `esp_http_server` bietet das
+nicht. Zwei Konsequenzen:
+- Multipart-Header-Block (bis zur ersten Leerzeile) und der
+  abschliessende Boundary-Trenner am Dateiende werden von Hand erkannt
+  (`settings_ota_upload_post_handler` in `web_server_manager.c`) - fuer
+  den Trenner dasselbe Tail-Puffer-Prinzip wie beim Marker-Scan (kann an
+  einer Chunk-Grenze zerschnitten sein), damit die Boundary-Bytes NICHT
+  versehentlich mit in die OTA-Partition geschrieben werden.
+- Statt einer Checkbox im selben Multipart-Body (haette eine
+  zusaetzliche Feld-Extraktion vor dem Datei-Feld gebraucht) gibt es zwei
+  getrennte `<form>`-Elemente auf der Einstellungen-Seite - "Downgrade
+  erzwingen" kommt als Query-Parameter
+  (`/settings/ota/upload?force_downgrade=1`) auf der zweiten
+  Formular-Action. Bewusster Komplexitaets-/Sicherheits-Tradeoff: minimal
+  schlechtere UX (Datei muss im zweiten Formular erneut ausgewaehlt
+  werden), aber kein zusaetzlicher Multipart-Feld-Parser noetig -
+  passt auch zur bisherigen Linie dieses Projekts (server-gerendertes
+  HTML, minimales Client-JS).
+
+### Zusatz ueber die reine Sensormeter-Paritaet hinaus: Bootloader-Rollback
+
+Sensormeter implementiert keinen automatischen Rollback bei einer
+haengenden/abstuerzenden neuen Firmware. ESP-IDF bietet das nahezu
+kostenlos eingebaut (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, per Default
+aus) - jetzt aktiviert (alle drei sdkconfig-Dateien). Bootloader markiert
+eine frisch geOTAte Firmware als "Pending Verify" und rollt automatisch
+auf die vorherige Partition zurueck, falls sie nicht bis zu einem
+bestaetigenden Aufruf durchstartet (Absturz, Watchdog-Reset). ESP-BMC
+ruft `esp_ota_mark_app_valid_cancel_rollback()` bewusst ganz am Anfang
+von `app_main()` auf (kein eigener Health-Check gebaut - "startet
+ueberhaupt bis hierher" reicht als Kriterium fuer dieses Projekt).
+Klargestellt: das war nicht explizit verlangt, aber ein natuerlicher,
+fast kostenloser Zusatz zu einer OTA-Funktion, die ohne ihn ein
+bootloop-anfaelliges Firmware-Update ohne Netz und doppelten Boden waere.
+
+### Admin-only, Audit-Log, kein `was loggen.txt`-Pflichteintrag
+
+OTA-Update ist auf `USER_ROLE_ADMIN` beschraenkt (hoehere Schwelle als
+der Rest der Einstellungen-Seite, ein Fehlgriff hier ist folgenreicher
+als z.B. eine falsche SNMP-Community) - sowohl das Anzeigen der Karte auf
+der Einstellungen-Seite als auch der Upload-Endpunkt selbst pruefen das.
+`was loggen.txt` verlangt fuer OTA nichts explizit, trotzdem
+audit-geloggt (Erfolg mit Versionsnummer, Ablehnung mit Grund) - passt
+zur bisherigen Linie dieses Projekts, sicherheitsrelevante Aktionen
+grosszuegiger zu loggen als das Minimum.
+
+### Ergebnis
+
+Real-Hardware-Env baut sauber nach zwei Format-Truncation-Fixes
+(`event`-Puffer 112->160 Byte, `ota_card`-Puffer 900->1280 Byte - gleiche
+wiederkehrende Ursache wie bei jeder bisherigen Formular-Ergaenzung).
+Beide Firmware-Envs zusaetzlich mit einem sauberen `rm -rf .pio/build`-
+Neubau bestaetigt (n16r8: Flash 61,7 % / 1.293.289 Byte, RAM 19,9 % /
+65.280 Byte; n8r8: Flash 61,7 % / 1.294.733 Byte, RAM 19,9 % / 65.296
+Byte - praktisch identisch, wie erwartet). Nicht auf echter Hardware/
+gegen einen echten OTA-Upload getestet - kein Board vorhanden.
+
+Bewusst nicht umgesetzt:
+- Kein Firmware-Signatur-/Secure-Boot-Schutz - der Marker ist wie bei
+  Sensormeter nur eine Verwechslungsbremse, kein kryptografischer Schutz.
+  Wer physischen/Admin-Zugriff auf das Webinterface hat, koennte
+  theoretisch eine praeparierte .bin mit passendem Marker hochladen.
+- Kein Fortschrittsbalken/Live-Status waehrend des Uploads (Browser zeigt
+  nur den nativen Datei-Upload-Fortschritt, keine eigene Anzeige) -
+  waere zusaetzliches Client-JS, passt nicht zur bisherigen Linie.
+- Keine automatische Update-Pruefung/kein Download von einem Server -
+  weiterhin nur lokaler .bin-Upload, exakt wie bei Sensormeter (dort
+  bewusst so entschieden, um den TLS-Client/mbedTLS-Flash-Bedarf zu
+  sparen - dieselbe Kosten-/Nutzen-Abwaegung wie bei ESP-BMCs eigener
+  Benachrichtigungswege-Entscheidung, Syslog+SMTP ohne TLS).
+
+## 2026-07-18 — SNMP-Firmwareversion + Zabbix-Template
+
+Auf Nutzerwunsch: SNMP soll die Firmwareversion ausgeben, plus ein
+Zabbix-Template nach dem Vorbild von `zabbix-template-sensormeter-wlan.yaml`.
+
+### Neues Objekt firmwareVersion (.17)
+
+Neue OID `1.3.6.1.4.1.99999.10.17.0` (String, read-only), Wert kommt aus
+`ota_manager_get_version()` (dieselbe Quelle wie die Einstellungen-Seite
+und der OTA-Marker, siehe vorheriger Eintrag) - keine eigene
+Versions-Kopie, ein einziger Wahrheits-Ursprung
+(`firmware_version.h`/`DEVICE_FIRMWARE_VERSION`). An das Ende der
+`s_oids[]`-Tabelle angehaengt (muss aufsteigend sortiert bleiben, .17 ist
+die bisher hoechste Nummer - passt automatisch). `snmp_manager`
+REQUIRES jetzt zusaetzlich `ota_manager` - nach dem Aendern der
+CMakeLists.txt REQUIRES-Zeile war wie immer ein `rm -rf .pio/build`
+noetig (Component-Manager-Cache-Gotcha, siehe fruehere Eintraege).
+
+### Zabbix-Template: eigener Enterprise-Zweig, eigene Geraetegruppe
+
+`docs/zabbix-template-esp-bmc.yaml` - Struktur/Stil direkt von
+`zabbix-template-sensormeter-wlan.yaml` uebernommen (Makros fuer
+Community + Schwellwerte, Item-Tags nach Komponente, Delay-Staffelung
+nach Aenderungshaeufigkeit: 1h fuer statische Werte, 5m fuer Netzwerk/
+Status, 1m fuer Sensoren), aber bewusst NICHT als "IoT Sensoren"-Gruppe
+einsortiert - ESP-BMC ist primaer ein PC-Fernsteuerungs-/BMC-lite-Geraet,
+Sensorik ist ein Nebenfeature (Lastenheft Abschnitt 4), anders als bei
+der reinen Sensormeter-Familie. Eigene Template-Gruppe "ESP-BMC".
+
+Alle 17 SNMP-Objekte als Items abgebildet (inkl. dem neuen
+firmwareVersion), direkt gegen `snmp_manager.c`s OID-Tabelle
+durchnummeriert und mit einem Python-`yaml.safe_load()`-Check auf
+strukturelle Konsistenz geprueft (17 Items = 17 eindeutige OIDs = 17
+eindeutige Keys, 25 eindeutige UUIDs insgesamt) - nicht nur "sieht
+plausibel aus", sondern nachgezaehlt.
+
+**Ein Struktur-Stolperstein beim ersten Validierungsversuch**: `triggers:`
+liegt in Zabbix' YAML-Exportformat auf derselben Ebene wie `templates:`
+(direkt unter `zabbix_export`), NICHT verschachtelt innerhalb des
+Template-Objekts - beim ersten Python-Check danach gesucht
+(`templates[0]['triggers']`) und einen `KeyError` bekommen, obwohl die
+YAML-Datei selbst korrekt war (`zabbix_export.triggers`). Korrigiert im
+Pruefskript, nicht in der Vorlage - ein Beleg dafuer, dass sich der
+"gegen sm-wlan validieren, nicht nur plausibel hinschreiben"-Ansatz
+gelohnt hat.
+
+**Bewusst weggelassen**: kein Zabbix-`valuemap` fuer die sechs 0/1-Felder
+(vpn.up, network.wlanstatic, status.powerled/hddled/powerkey/resetkey) -
+waere fuers Dashboard lesbarer ("An"/"Aus" statt "1"/"0"), aber KEINES
+der vier existierenden Sensormeter-Templates nutzt dieses Zabbix-YAML-
+Feature, also gab es keine verifizierte Vorlage fuer die exakte Syntax -
+freihaendig geraten haette bei einem Fehler den Import der gesamten
+Datei brechen koennen. Stattdessen die 0/1-Bedeutung nur in der
+Item-`description` dokumentiert, gleiche Einfachheitsstufe wie die
+Sensormeter-Vorlagen.
+
+**Keine Zabbix-Aktion fuer powerKey/resetKey SET** - das Template bildet
+nur den Lesezustand ab. Ein SNMP-SET-Trigger haette ein zusaetzliches
+Schreib-Community-Makro plus eine Zabbix-Action/ein Skript gebraucht -
+kein Vorbild dafuer in sm-wlan (das Template hat gar keine
+SET-faehigen Objekte), also bewusst ausserhalb des angefragten Scopes
+("Vorbild sm-wlan") gelassen.
+
+### Ergebnis
+
+Beide Firmware-Envs sauber neu gebaut (nach dem REQUIRES-Cache-Wipe):
+n16r8 Flash 61,8 % (1.295.317 Byte), RAM 19,9 % (65.264 Byte); n8r8
+Flash 61,6 % (1.292.053 Byte), RAM 19,9 % (65.280 Byte). Zabbix-Template
+mit `yaml.safe_load()` strukturell verifiziert, nicht gegen eine echte
+Zabbix-Instanz importiert (keine vorhanden). Nicht auf echter Hardware/
+gegen einen echten SNMP-Client getestet - kein Board vorhanden.
+
+## 2026-07-18 — Admin-Guide (HTML + PDF), Vorbild sm-wlan
+
+Auf Nutzerwunsch: `docs/admin-guide.html` neu angelegt (existierte bisher
+nicht), Struktur/Druck-CSS direkt von
+`sensormeter-wlan/repo/docs/admin-guide.html` uebernommen (Cover-Seite,
+nummerierte Abschnitte mit Inhaltsverzeichnis, Callout-Klassen
+warn/good/neutral, druckoptimierte Tabellen/Code-Bloecke mit
+`page-break-inside: avoid`), aber inhaltlich komplett neu geschrieben und
+mit ESP-BMCs eigener Copper/Patina/Indigo-Farbgebung (statt Sensormeters
+Navy/Orange) an die bereits etablierte Optik von
+`docs/verdrahtungsplan.html`/`implementierungsplan.html` angeglichen -
+eigene Bildsprache, kein blindes Re-Branding der Vorlage.
+
+### Bewusste Abweichungen vom Vorbild (kein 1:1-Nachbau)
+
+- **Kein OLED-Skizzen-Abschnitt** - ESP-BMC hat kein Display, die
+  gesamte CSS-Maschinerie fuer die OLED-Bildschirm-Sketches (`.device`,
+  `.screen`, `.oled-text`) aus der Vorlage wurde konsequent weggelassen
+  statt leer mitgeschleppt.
+- **Kein AP-Fallback-Abschnitt** - anders als Sensormeter WLAN hat
+  ESP-BMC keinen eigenen Access-Point-Ersteinrichtungsmodus (im Code
+  bestaetigt: `network_manager.c` kennt kein `WIFI_MODE_AP`) - die
+  Ersteinrichtung laeuft komplett ueber USB (`tools/Setup.ps1`), eigener
+  Abschnitt 2 dafuer statt eines AP-Abschnitts.
+- **Kein mDNS-Hostname-Zugriff** erwaehnt (`http://<name>.local/`) - nicht
+  implementiert, waere erfunden gewesen.
+- **Kein XML-Konfigurationsexport/-import-Zyklus** wie bei Sensormeter
+  (`config.xml` dump/upload) - ESP-BMC hat nur einen JSON-Export
+  (`config download`, USB/Web), noch kein Upload/Restore-Gegenstueck
+  (siehe Projekt-Memory, bewusst zurueckgestellt) - im Guide entsprechend
+  nur als Read-Only-Export beschrieben, kein erfundenes Upload-Kommando.
+- **Kein GitHub-Link im Cover/Footer** - Repo hat noch keinen Remote
+  (siehe Projekt-Memory), ein Link waere erfunden gewesen.
+- Neue, ESP-BMC-eigene Abschnitte ohne Sensormeter-Vorbild: Watchdog-LED
+  (Abschnitt 3), SSH-Zugang (6), Firmware-Updates/OTA mit Identitaets-/
+  Downgrade-Pruefung (7), Verdrahtung inkl. Dual-Powering-Warnung (10).
+
+### Inhaltliche Quelle: Code direkt gelesen, nicht aus dem Gedaechtnis
+
+Jeder USB-Kommando-Eintrag (Abschnitt 9.1) direkt gegen
+`usb_manager.c`s `dispatch_command()` abgeglichen (exakte
+Unterkommando-Syntax, z.B. `taster power_push|power_hold|reset
+[passwort]`, `reset settings|settings_values`) statt aus fruehen
+Session-Notizen uebernommen - an dieser Stelle waere ein Erinnerungsfehler
+besonders aergerlich (falsche Kommandosyntax in einer gedruckten
+Anleitung).
+
+### PDF-Erzeugung: headless Chrome, wie beim etablierten Workaround
+
+`chrome.exe --headless --disable-gpu --no-pdf-header-footer
+--print-to-pdf=... file:///...html` - dieselbe Methode wie beim
+fruehen "JS-lastige Preisseiten"-Workaround dieser Session (siehe
+Projekt-Memory). Ergebnis: 10 Seiten, 302 KB. Verifiziert mit
+`pdftotext -enc UTF-8` (ohne das Encoding-Flag zeigt das Tool Umlaute
+als "?" - reines Anzeigeartefakt der Terminal-Kodierung, nicht im PDF
+selbst) - Inhalt/Struktur/Sonderzeichen korrekt, kein Datenverlust bei
+der HTML-zu-PDF-Konvertierung.
+
+### Ergebnis
+
+`docs/admin-guide.html` (neu) + `docs/admin-guide.pdf` (neu, 302 KB, 10
+Seiten). HTML-Tag-Balance geprueft (div/h1/h2/h3/table/tr/td/th/ul/ol/
+li/p alle ausgeglichen). Keine Firmware-Aenderung in diesem Schritt,
+kein Build noetig.
+
+## 2026-07-18 — One-Pager (HTML + PDF), Vorbild sm-Familie
+
+Auf Nutzerwunsch: `docs/esp-bmc-onepager.html` + `.pdf`, HTML diesmal
+bewusst behalten (anders als der reine PDF-Only-Ansatz beim frueheren
+Sensormeter-Modul-Onepager, siehe Projekt-Memory - hier war "HTML
+behalten" explizit verlangt). `sensormeter-wlan`s eigenes Repo hatte
+selbst keine Onepager-HTML-Quelle (nur die PDF) - stattdessen
+`sensormeter/repo/docs/sensormeter-onepager.html` (Basisprojekt der
+Familie) als Strukturvorlage herangezogen: A4-Einzelseite, dreispaltiges
+Grid, Kopfzeile mit Logo/Titel/Badges, Fusszeile mit Kerndokument-Liste -
+inhaltlich komplett neu fuer ESP-BMC geschrieben, Farbgebung wieder auf
+Copper/Patina/Indigo umgestellt (nicht Sensormeters Navy/Orange).
+
+### Eigenes Icon statt der Sensormeter-Familienmarke
+
+Das Vorbild nutzt ein Dreieck/Orbit-Symbol als feststehende Sensormeter-
+Familienmarke - fuer ESP-BMC waere die Wiederverwendung irrefuehrendes
+Cross-Branding gewesen (andere Produktfamilie). Stattdessen ein neues,
+einfaches Icon entworfen (Kreis + Power-Button-Glyph in
+Copper/Patina) - passt inhaltlich zum "Fernsteuerung/Power-Management"-
+Thema und ist mit wenigen SVG-Primitiven umgesetzt.
+
+### Erster Render: zwei statt eine Seite - Typografie nachjustiert
+
+Der erste Entwurf lief auf 2 PDF-Seiten hinaus (per Skript gezaehlt:
+`/Type /Page` im PDF-Rohtext), fuer einen "One"-Pager nicht akzeptabel.
+Nicht per Augenmass korrigiert, sondern gezielt: Basis-Schriftgroesse
+10,5px -> 9,6px, Zeilenhoehe 1,32 -> 1,24, Abschnittsabstaende/
+Innenabstaende leicht verringert, ein Absatz in der Einleitung
+zusammengefasst. Nach der Anpassung erneut gerendert und mit demselben
+Seitenzahl-Check bestaetigt: genau 1 Seite. Zusaetzlich einen
+Screenshot des HTML (nicht der PDF) per `chrome --headless
+--screenshot` angefertigt und visuell geprueft - kein Text
+ueberlappt/wird abgeschnitten, sinnvolle Spaltenbalance.
+
+### Ergebnis
+
+`docs/esp-bmc-onepager.html` (neu) + `docs/esp-bmc-onepager.pdf` (neu,
+1 Seite, 114 KB). Keine Firmware-Aenderung in diesem Schritt, kein Build
+noetig.

@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>ESP-BMC — One-Pager</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #1c2430;
+    background: #ffffff;
+    font-size: 9.6px;
+    line-height: 1.24;
+  }
+  .page { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 0 0 3mm 0; }
+
+  header {
+    background: #1e2530;
+    color: #ffffff;
+    padding: 5mm 12mm 3mm 12mm;
+  }
+  .eyebrow {
+    font-size: 8.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #d9a06c;
+    margin-bottom: 2.5mm;
+  }
+  h1 {
+    margin: 0 0 1.5mm 0;
+    font-size: 23px;
+    letter-spacing: 0.02em;
+  }
+  .subtitle { color: #cdd3de; font-size: 11px; margin-bottom: 3mm; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .badge-orange { background: #b5622a; color: #fff; }
+  .badge-navy { background: #313a46; color: #cdd3de; }
+
+  main {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 7mm;
+    padding: 4mm 12mm 0 12mm;
+  }
+  h2 {
+    font-size: 8.8px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #b5622a;
+    border-bottom: 1px solid #e4e1d8;
+    padding-bottom: 1mm;
+    margin: 0 0 1.6mm 0;
+  }
+  section + section { margin-top: 2.6mm; }
+  p { margin: 0 0 1.2mm 0; }
+  ul { margin: 0; padding-left: 3.6mm; }
+  li { margin-bottom: 0.5mm; }
+
+  .modgroup { margin-bottom: 2mm; }
+  .modgroup-label {
+    font-size: 8px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #8a93a3;
+    margin-bottom: 1mm;
+  }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 2.5px; }
+  .pill {
+    background: #f2f0e9;
+    border: 1px solid #e4e1d8;
+    border-radius: 3px;
+    padding: 1.5px 5px;
+    font-size: 9px;
+    color: #33261b;
+  }
+  .pill-new { background: #eaf3ef; border-color: #b9d9cc; color: #1f5c46; font-weight: 600; }
+
+  .flow-box {
+    border: 1px solid #e4e1d8;
+    border-left: 3px solid #b5622a;
+    border-radius: 3px;
+    padding: 2mm 3mm;
+    margin-bottom: 1.5mm;
+    background: #fbfaf7;
+  }
+  .flow-title { font-weight: 700; font-size: 10px; }
+  .flow-sub { color: #6b7280; font-size: 9px; }
+  .flow-arrow { text-align: center; color: #b0b6c0; font-size: 10px; margin: 0.5mm 0; }
+
+  table.kpi { width: 100%; border-collapse: collapse; }
+  table.kpi td { padding: 1.2mm 0; border-bottom: 1px solid #eeece5; font-size: 10px; }
+  table.kpi td:last-child { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .danger-box {
+    border: 1px solid #e3ac9f;
+    border-left: 3px solid #a63d2e;
+    border-radius: 3px;
+    padding: 2mm 3mm;
+    margin-bottom: 1.5mm;
+    background: #fbeeec;
+    font-size: 9px;
+    color: #6b2b21;
+  }
+  .danger-box b { color: #a63d2e; }
+
+  footer {
+    margin: 3mm 12mm 0 12mm;
+    padding-top: 2mm;
+    border-top: 1px solid #e4e1d8;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    font-size: 9px;
+    color: #6b7280;
+  }
+  footer .repo { font-weight: 600; color: #1c2430; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <div class="eyebrow">Firmware-Projekt · Hobby / Privat</div>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <svg viewBox="0 0 48 48" fill="none" width="32" height="32" style="flex-shrink:0;">
+      <circle cx="24" cy="24" r="15" stroke="#E08A4C" stroke-width="2.6"/>
+      <line x1="24" y1="10" x2="24" y2="22" stroke="#E9E4D8" stroke-width="2.8" stroke-linecap="round"/>
+      <path d="M16.5,15.5 A13,13 0 1 0 31.5,15.5" stroke="#74B7A6" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+    </svg>
+    <h1>ESP-BMC</h1>
+  </div>
+  <div class="subtitle">ESP32-S3 DevKitC-1 (N16R8/N8R8) — Fernsteuerung, Überwachung und Konfiguration eines PCs per Web, SSH, USB und SNMP, ganz ohne dessen eigenes Betriebssystem</div>
+  <div class="badges">
+    <span class="badge badge-orange">v0.9.0-rc4 · erste Beta</span>
+    <span class="badge badge-navy">P0–P7 code-vollständig · P8 offen</span>
+    <span class="badge badge-navy">N16R8 + N8R8 gepflegt</span>
+    <span class="badge badge-navy">Web · SSH · USB · SNMP</span>
+  </div>
+</header>
+
+<main>
+  <div>
+    <section>
+      <h2>Überblick</h2>
+      <p>„BMC-lite" für einen normalen Desktop-PC: erfasst dessen
+      Power-/Reset-Taster und Power-/HDD-LED über den Mainboard-Header,
+      leitet Tastendrücke galvanisch getrennt weiter und macht den PC
+      über Web, SSH und SNMP fernsteuerbar — auch bei ausgeschaltetem PC,
+      solange das ESP-Board über ATX&nbsp;+5VSB versorgt wird. Reines
+      ESP-IDF (kein Arduino), eigener SSH-Server, eigener hand-kodierter
+      SNMP-Agent, eigenes OTA-Update mit Identitäts-/Downgrade-Prüfung.</p>
+    </section>
+
+    <section>
+      <h2>Hardware</h2>
+      <ul>
+        <li>ESP32-S3 DevKitC-1, Standard-44-Pin-Footprint, zwei gepflegte
+        Flash-Varianten (N16R8 16&nbsp;MB / N8R8 8&nbsp;MB), beide mit
+        8&nbsp;MB Octal-PSRAM</li>
+        <li>Zwei USB-C-Ports: Flash/UART-Bridge + natives USB
+        (CDC+HID-Controller, für eine spätere PC-Weiterleitung reserviert)</li>
+        <li>Onboard-RGB-LED (WS2812, GPIO48) als Watchdog-Statusanzeige,
+        keine externe Verdrahtung nötig</li>
+        <li>NTC 10K B3590 + DHT11 als optionale Umgebungssensorik</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Elektrischer Anschluss</h2>
+      <p>Vollständiger interaktiver Verdrahtungsplan mit allen 44
+      Header-Pins: <b>docs/verdrahtungsplan.html</b>. Zwei Ausbaustufen
+      für die Taster-Weiterleitung — mit PC817-Optokoppler
+      (<b>empfohlen</b>, galvanische Trennung) oder ohne (NPN-Transistor,
+      einfacher, aber ohne Trennung).</p>
+      <div class="danger-box">
+        <b>Dual-Powering-Gefahr:</b> USB-VBUS und die ATX-+5VSB-
+        Alternativversorgung (<span style="font-family:monospace;">5Vin</span>-Pin)
+        liegen intern auf demselben 5V-Netz — nie beide Quellen
+        gleichzeitig aktiv anschließen (Rückspeisungsrisiko in
+        USB-Host-Controller/ATX-Netzteil).
+      </div>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>Software-Architektur</h2>
+
+      <div class="modgroup">
+        <div class="modgroup-label">Steuerung/Erfassung</div>
+        <div class="pill-row">
+          <span class="pill">GpioManager</span><span class="pill">SensorManager</span>
+          <span class="pill">WatchdogManager</span>
+        </div>
+      </div>
+
+      <div class="modgroup">
+        <div class="modgroup-label">Netzwerk/Fernzugriff</div>
+        <div class="pill-row">
+          <span class="pill">NetworkManager</span><span class="pill">WireguardManager</span>
+          <span class="pill">WebServerManager</span><span class="pill">SshManager</span>
+          <span class="pill">SnmpManager</span><span class="pill">NotificationManager</span>
+          <span class="pill pill-new">OtaManager</span>
+        </div>
+      </div>
+
+      <div class="modgroup">
+        <div class="modgroup-label">Persistenz/Konten</div>
+        <div class="pill-row">
+          <span class="pill">ConfigManager</span><span class="pill">StorageManager</span>
+          <span class="pill">UserManager</span><span class="pill">AuditLog</span>
+          <span class="pill">UsbManager</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Datenfluss</h2>
+      <div class="flow-box">
+        <div class="flow-title">Mainboard-Header + Sensoren</div>
+        <div class="flow-sub">Taster/LED (galv. getrennt) · NTC/DHT11 (60s-Takt)</div>
+      </div>
+      <div class="flow-arrow">↓</div>
+      <div class="flow-box">
+        <div class="flow-title">GpioManager / SensorManager → ConfigManager (LittleFS)</div>
+        <div class="flow-sub">Tastschutz-Gate · Schwellwertvergleich · JSON-Persistenz</div>
+      </div>
+      <div class="flow-arrow">↓</div>
+      <div class="flow-box">
+        <div class="flow-title">Web · SSH · SNMP · USB · <b>Syslog/SMTP</b></div>
+        <div class="flow-sub">HTTP+WebSocket · Port 22 · UDP 161 · ##ESPR/USB · <b>UDP 514 / Klartext-SMTP</b></div>
+      </div>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>Status &amp; Kennzahlen</h2>
+      <table class="kpi">
+        <tr><td>Version</td><td>0.9.0-rc4 (Beta)</td></tr>
+        <tr><td>Phasen umgesetzt</td><td>P0–P7 code-fertig</td></tr>
+        <tr><td>Flash, N16R8 (App-Slot)</td><td>61,8 %</td></tr>
+        <tr><td>Flash, N8R8 (App-Slot)</td><td>61,6 %</td></tr>
+        <tr><td>RAM (beide Varianten)</td><td>~19,9 %</td></tr>
+        <tr><td>Board-Bringup</td><td>offen (kein Board angeschlossen)</td></tr>
+      </table>
+    </section>
+
+    <section>
+      <h2>Funktionen</h2>
+      <ul>
+        <li>Taster-/LED-Weiterleitung mit Tastschutz-Gate, wahlweise galvanisch getrennt (PC817)</li>
+        <li>Webserver: Übersicht mit 24h-Graph, rollenbasierte Benutzerverwaltung, Audit-Log, WebSocket-Konsole</li>
+        <li>Eigener SSH-Server (Passwort + ECDSA/Ed25519-Public-Key), Host-Key-Fingerprint auf der Übersichtsseite</li>
+        <li>WireGuard-VPN-Upload (Standardroute automatisch entfernt)</li>
+        <li>SNMP v1/v2c (17 Objekte, GET+SET auf Power-/Reset-Taste), eigenes Zabbix-Template</li>
+        <li>Syslog + Klartext-SMTP mit Entprellung (Sammel-Mail statt Mail-Flut) bei Schwellwert-Alarmen</li>
+        <li>Lokales OTA-Update mit Identitäts-/Downgrade-Prüfung + automatischem Bootloader-Rollback</li>
+        <li>Onboard-RGB-Watchdog-LED + ESP-IDF-Task-Watchdog (Panic+Reboot bei Hänger)</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Entwicklungsansatz</h2>
+      <ul>
+        <li>Jede Ausbaustufe per <b>pio run</b> auf beiden Flash-Varianten gebaut &amp; verifiziert, Flash-/RAM-Deltas im Entscheidungsprotokoll dokumentiert</li>
+        <li>OTA-Identitäts-/Downgrade-Prüfung direkt aus der Sensormeter-Familie portiert — inkl. eines dort bereits gefundenen und behobenen Null-Byte-Scan-Fehlers, von Anfang an vermieden statt selbst neu entdeckt</li>
+        <li>Wokwi-Simulation bewusst pausiert bis zum ersten echten Board — kein Zeitverlust durch Simulationsartefakte an realer Hardware</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Offen</h2>
+      <ul>
+        <li>Board-Bringup: noch kein ESP32-S3-DevKitC-1 in dieser Session angeschlossen/geflasht</li>
+        <li>Serieller BIOS-Zugriff (Lastenheft 7.3) — einziges noch nicht begonnenes Feature</li>
+        <li>USB-Port-Zuordnung (Flash vs. natives USB) nur mit mittlerem Vertrauen aus Fotos bestimmt</li>
+        <li>Generisches Config-Upload über USB (nur Download vorhanden)</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Einstieg</h2>
+      <ul>
+        <li><b>tools/Setup.ps1</b> – Flash + Ersteinrichtung (Auto-Varianten-Erkennung)</li>
+        <li><b>docs/admin-guide.html/.pdf</b> – vollständige Bedienungsanleitung</li>
+        <li><b>docs/lastenheft.txt</b> / <b>pflichtenheft.txt</b> – Anforderungen</li>
+      </ul>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div>
+    <div class="repo">ESP-BMC (lokales Repository, noch kein Remote)</div>
+    <div>Entwickelt mit Unterstützung von Claude (Anthropic) als Coding-Assistent</div>
+  </div>
+  <div style="text-align:right;max-width:90mm;">
+    <b>Kerndokumente im Repo:</b> Lastenheft · Pflichtenheft · Entscheidungsprotokoll ·
+    Projektstand · Admin-Guide · Verdrahtungsplan · Stückliste · Zabbix-Template
+  </div>
+</footer>
+
+</div>
+</body>
+</html>
