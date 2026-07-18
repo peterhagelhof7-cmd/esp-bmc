@@ -20,6 +20,7 @@ Schnittstelle, die sich zugleich als USB-HID-Tastatur ausgibt.
 | [docs/pflichtenheft.txt](docs/pflichtenheft.txt) | Technische Umsetzung: Module, Pinbelegung, Speicherlayout |
 | [docs/implementierungsplan.html](docs/implementierungsplan.html) | Visueller Implementierungsplan (lokal im Browser öffnen) |
 | [docs/entscheidungen.md](docs/entscheidungen.md) | Entscheidungsprotokoll: Boardwahl, Pinbelegung, OTA, SNMP, bekannte Abweichungen |
+| [docs/board-recherche.md](docs/board-recherche.md) | Board-Recherche zur Hardwareentscheidung (diymore ESP32-S3 DevKitC-1 N16R8), inkl. [Foto](docs/board-foto.jpg) |
 | [docs/bom.md](docs/bom.md) | Bauteile pro Gerät (inkl. Optokoppler-/Transistor-Variante, Spannungsteiler) |
 | [docs/verdrahtungsplan.html](docs/verdrahtungsplan.html) | Interaktiver Verdrahtungsplan: alle Pins, USB-Portzuordnung, ATX-+5VSB-Option, Dual-Powering-Warnung |
 | [docs/admin-guide.pdf](docs/admin-guide.pdf) ([HTML](docs/admin-guide.html)) | Admin-Guide: Inbetriebnahme, Weboberfläche, SSH, OTA, SNMP/Zabbix, USB-Kommandozeile |
@@ -110,3 +111,7 @@ Aktueller Stand siehe [docs/projektstand.md](docs/projektstand.md).
 
 Repo-Struktur und Dokumentation entstehen in Zusammenarbeit mit
 [Claude](https://claude.com/claude-code) (Anthropic) als KI-Coding-Assistent.
+
+## Lizenz
+
+[MIT](LICENSE)
