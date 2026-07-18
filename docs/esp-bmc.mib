@@ -1,0 +1,305 @@
+ESP-BMC-MIB DEFINITIONS ::= BEGIN
+
+-- =============================================================================
+-- WICHTIGER HINWEIS ZUR OID (bitte lesen, bevor dieses MIB irgendwo
+-- importiert wird):
+--
+-- Die Enterprise-Nummer 99999 unter 1.3.6.1.4.1 ist eine INOFFIZIELLE,
+-- NICHT bei der IANA registrierte Platzhalter-Enterprise-OID fuer dieses
+-- Hobby-/Privatprojekt. Sie ist NICHT eindeutig und kann mit der
+-- Enterprise-OID eines anderen, echten Projekts kollidieren.
+--
+-- Fuer den privaten/Hobby-Einsatz in einem geschlossenen Netz gedacht,
+-- NICHT fuer oeffentliche oder kommerzielle Nutzung ohne eine eigene,
+-- echte, bei der IANA registrierte Enterprise-Number
+-- (siehe https://www.iana.org/assignments/enterprise-numbers).
+-- Eine Registrierung ist kostenlos, dauert aber i.d.R. mehrere Wochen und
+-- wurde fuer dieses Projekt bewusst nicht durchgefuehrt.
+--
+-- English summary: OID 99999 under 1.3.6.1.4.1 is an UNOFFICIAL,
+-- NOT IANA-registered placeholder enterprise number chosen for this
+-- hobby project. It is not guaranteed unique and may collide with a
+-- real registrant. Suitable for private/hobby use on a closed network
+-- only - do not rely on it for public or commercial deployments without
+-- obtaining your own registered enterprise number from IANA.
+-- =============================================================================
+
+-- =============================================================================
+-- ESP-BMC-MIB - private Enterprise-MIB fuer das ESP-BMC-Projekt
+-- (ESP32-S3-basierte PC-Fernsteuerung/BMC-lite: Power-/Reset-Taster-
+-- Weiterleitung, Power-/HDD-LED-Erfassung, WLAN, WireGuard-VPN,
+-- NTC-/DHT11-Temperatursensorik).
+--
+-- Diese Datei ist eine werkzeugneutrale SNMPv2-SMI-Beschreibung derselben
+-- 17 Objekte, die auch im Zabbix-Template
+-- docs/zabbix-template-esp-bmc.yaml verwendet werden - fuer alle anderen
+-- SNMP-Werkzeuge (Checkmk, PRTG generic SNMP, Nagios/check_snmp,
+-- LibreNMS, snmpwalk/snmptranslate/snmpget aus dem net-snmp-Paket usw.).
+-- Beide Dateien beschreiben denselben Agenten und muessen bei
+-- Aenderungen an snmp_manager.c gemeinsam gepflegt werden.
+--
+-- Direkt gegen firmware/components/snmp_manager/snmp_manager.c
+-- verifiziert (OID-Nummern, Datentypen, Wertebereiche/Sentinel-Werte).
+--
+-- Agent: SNMP v1/v2c, UDP Port 161, community-basiert (kein SNMPv3,
+-- kein GetBulk - wird vom Agenten mit genErr beantwortet). Alle 17
+-- Objekte sind Skalare (Instanz immer ".0"). Zwei Objekte (powerKey,
+-- resetKey) sind zusaetzlich per SNMP SET schreibbar, siehe deren
+-- DESCRIPTION-Klauseln - dafuer ist eine separate, staerker geschuetzte
+-- Schreib-Community noetig (Default "private"), verschieden von der
+-- Lese-Community (Default "public").
+-- =============================================================================
+
+IMPORTS
+    enterprises, MODULE-IDENTITY, OBJECT-IDENTITY, OBJECT-TYPE,
+    Integer32, Gauge32, TimeTicks
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC;
+
+espBmcMIB MODULE-IDENTITY
+    LAST-UPDATED "202607180000Z"
+    ORGANIZATION "Privates Hobby-Projekt (kein Unternehmen)"
+    CONTACT-INFO
+        "Privates Hobby-/Bastelprojekt ohne kommerziellen Support-Kanal.
+         Projekt-Repository: https://github.com/peterhagelhof7-cmd/esp-bmc"
+    DESCRIPTION
+        "Private Enterprise-MIB fuer ESP-BMC (ESP32-S3-basiertes
+         BMC-lite-Modul zur PC-Fernsteuerung/-ueberwachung).
+
+         WARNUNG: Die verwendete Enterprise-Nummer 99999 ist NICHT bei
+         der IANA registriert (siehe Kommentarblock am Dateianfang) -
+         dies ist eine frei erfundene Platzhalter-Nummer fuer den
+         privaten Gebrauch in einem geschlossenen Netz, keine echte,
+         eindeutige Enterprise-OID.
+
+         Basiszweig: 1.3.6.1.4.1.99999.10 (Zweig .10 ist ESP-BMC
+         vorbehalten; die separate Sensormeter-Projektfamilie belegt
+         .1 bis .5 direkt unter derselben unregistrierten 99999er
+         'Haushalts'-Nummer - beide Zweige sind NICHT kompatibel
+         zueinander)."
+    REVISION "202607180000Z"
+    DESCRIPTION
+        "Erste Fassung, alle 17 aktuell implementierten Objekte."
+    ::= { enterprises 99999 }
+
+-- =============================================================================
+-- Struktur:
+--   espBmcMIB (enterprises.99999)
+--     espBmc (10)   <- Basiszweig dieser Firmware, direkt 17 Skalare
+--                       darunter (.1 .. .17), genau wie im Agenten
+--                       (snmp_manager.c, Tabelle s_oids[]) und im
+--                       Zabbix-Template kodiert. Bewusst FLACH gehalten,
+--                       keine zusaetzlichen Gruppierungs-Zwischenknoten -
+--                       der Agent kennt selbst nur diese 17 Blattknoten,
+--                       ein tieferer Baum haette hier keine Entsprechung
+--                       in der Implementierung und wuerde nur verwirren.
+-- =============================================================================
+
+espBmc OBJECT-IDENTITY
+    STATUS      current
+    DESCRIPTION
+        "Basiszweig aller ESP-BMC-Objekte. Neue Objekte werden immer mit
+         der naechsthoeheren freien Nummer angehaengt, bestehende OIDs
+         werden nie umnummeriert (siehe docs/entscheidungen.md)."
+    ::= { espBmcMIB 10 }
+
+-- =============================================================================
+-- Objekte (alphabetisch nach OID-Nummer, entspricht s_oids[] in
+-- snmp_manager.c)
+-- =============================================================================
+
+espBmcSysName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..63))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Frei vergebbarer Systemname (auf der Einstellungsseite des
+         Geraets konfigurierbar) - NICHT der feste Systemtyp
+         (espBmcSysType)."
+    ::= { espBmc 1 }
+
+espBmcUptime OBJECT-TYPE
+    SYNTAX      TimeTicks
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Laufzeit seit dem letzten Start in Hundertstelsekunden
+         (Standard-SNMP-TimeTicks), auf dem Geraet aus esp_timer_get_time()
+         berechnet (Centisekunden). Zeigt KEINE Systemzeit/Uhrzeit,
+         sondern die reine Betriebsdauer seit Boot."
+    ::= { espBmc 2 }
+
+espBmcWlanIp OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..15))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Aktuelle WLAN-IPv4-Adresse in Punkt-Dezimal-Schreibweise
+         (z. B. '192.168.1.42'). '0.0.0.0', falls das Geraet aktuell
+         keine gueltige IP hat (kein WLAN verbunden)."
+    ::= { espBmc 3 }
+
+espBmcWlanSsid OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..32))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "SSID des aktuell verbundenen WLAN-Netzes."
+    ::= { espBmc 4 }
+
+espBmcVpnUp OBJECT-TYPE
+    SYNTAX      INTEGER { down(0), up(1) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Status des WireGuard-VPN-Tunnels: 0 = kein Tunnel aktiv,
+         1 = Tunnel aktiv. Kurzes Abfrageintervall empfohlen, da fuer
+         den WireGuard-Fernzugriff auf den verwalteten PC kritisch."
+    ::= { espBmc 5 }
+
+espBmcVpnIp OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..15))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Lokale IPv4-Adresse des Geraets innerhalb des WireGuard-Tunnels
+         (Tunnel-Interface-Adresse, nicht die WLAN-IP)."
+    ::= { espBmc 6 }
+
+espBmcNtcTemp OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Temperatur des NTC-10K-B3590-Sensors in Grad Celsius, als
+         Ganzzahl mit dem Faktor 10 uebertragen (z. B. 235 = 23,5 Grad C) -
+         durch ein Monitoring-Werkzeug mit dem Faktor 0,1 zurueckzurechnen.
+         Sentinel-Wert -32768 (also -3276,8 nach Umrechnung), falls kein
+         gueltiger Messwert vorliegt (Sensor nicht angeschlossen oder
+         Lesefehler) - bewusst kein separater Fehlerstatus-Wert, sondern
+         ein als Ausreisser klar erkennbarer Sentinel (siehe
+         docs/entscheidungen.md)."
+    ::= { espBmc 7 }
+
+espBmcDhtTemp OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Temperatur des DHT11-Sensors in Grad Celsius, als Ganzzahl mit
+         dem Faktor 10 uebertragen (z. B. 210 = 21,0 Grad C) - durch ein
+         Monitoring-Werkzeug mit dem Faktor 0,1 zurueckzurechnen.
+         Sentinel-Wert -32768 (also -3276,8 nach Umrechnung), falls kein
+         gueltiger Messwert vorliegt - siehe espBmcNtcTemp."
+    ::= { espBmc 8 }
+
+espBmcDhtHumidity OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Relative Luftfeuchtigkeit des DHT11-Sensors in Prozent, als
+         Ganzzahl mit dem Faktor 10 uebertragen (z. B. 455 = 45,5 %) -
+         durch ein Monitoring-Werkzeug mit dem Faktor 0,1
+         zurueckzurechnen. Sentinel-Wert -32768, falls kein gueltiger
+         Messwert vorliegt - siehe espBmcNtcTemp."
+    ::= { espBmc 9 }
+
+espBmcPowerLed OBJECT-TYPE
+    SYNTAX      INTEGER { off(0), on(1) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Momentanzustand des erfassten Mainboard-Power-LED-Signals
+         (Gehaeuse-LED): 0 = aus, 1 = an."
+    ::= { espBmc 10 }
+
+espBmcHddLed OBJECT-TYPE
+    SYNTAX      INTEGER { inactive(0), active(1) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "HDD-LED-Aktivitaet der letzten 10 Sekunden: 1 = innerhalb dieses
+         Zeitfensters wurde mindestens ein Signal erfasst (faengt auch
+         kurze Blinkimpulse zwischen zwei Abfragen), 0 = keine Aktivitaet
+         im Zeitfenster."
+    ::= { espBmc 11 }
+
+espBmcFreeHeap OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Aktuell freier Heap-Speicher des ESP32-S3 in Bytes
+         (esp_get_free_heap_size())."
+    ::= { espBmc 12 }
+
+espBmcWlanStatic OBJECT-TYPE
+    SYNTAX      INTEGER { dhcp(0), static(1) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "WLAN-Adressvergabe: 0 = DHCP, 1 = statische IP konfiguriert."
+    ::= { espBmc 13 }
+
+espBmcSysType OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..31))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Fester Systemtyp-Bezeichner, identisch fuer jedes Geraet dieser
+         Firmware (aktuell 'ESP-BMC') - im Unterschied zu espBmcSysName
+         nicht frei vergebbar."
+    ::= { espBmc 14 }
+
+espBmcPowerKey OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "Asymmetrischer Wertebereich zwischen GET und SET (deshalb
+         bewusst kein aufgezaehlter INTEGER-Typ):
+
+         GET liefert den aktuellen Weiterleitungs-Zustand der
+         Power-Taste: 1 = ein Tastendruck wird gerade an den
+         Mainboard-Header weitergeleitet (physisch, oder per Web/USB/SNMP
+         ausgeloest), 0 = keine Weiterleitung aktiv.
+
+         SET loest einen simulierten Tastendruck aus: 1 = kurzer Druck,
+         2 = langer Druck (erzwungenes Abschalten) - andere SET-Werte als
+         im GET-Zustand moeglich. Jeder andere SET-Wert wird mit
+         badValue beantwortet. Ein SET erfordert die
+         separate SNMP-Schreib-Community (nicht die Lese-Community,
+         Default 'private') und respektiert denselben Tastschutz wie die
+         Web-/USB-Bedienung - eine per Tastschutz blockierte Anfrage wird
+         ebenfalls mit badValue beantwortet. Jeder ausgeloeste Tastendruck
+         wird im Audit-Log des Geraets vermerkt (inkl. Quell-IP)."
+    ::= { espBmc 15 }
+
+espBmcResetKey OBJECT-TYPE
+    SYNTAX      INTEGER { idle(0), forwarding(1) }
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "GET liefert den aktuellen Weiterleitungs-Zustand der
+         Reset-Taste: 1 = ein Tastendruck wird gerade an den
+         Mainboard-Header weitergeleitet, 0 = keine Weiterleitung aktiv.
+
+         SET loest einen simulierten kurzen Tastendruck aus - einzig
+         gueltiger SET-Wert ist 1, jeder andere Wert wird mit badValue
+         beantwortet (kein 'langer Druck' fuer Reset, anders als bei
+         espBmcPowerKey). Gleiche Zugriffsvoraussetzungen
+         (Schreib-Community, Tastschutz, Audit-Log) wie espBmcPowerKey."
+    ::= { espBmc 16 }
+
+espBmcFirmwareVersion OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..31))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Aktuell laufende Firmwareversion als Zeichenkette
+         (z. B. '0.9.0-rc4')."
+    ::= { espBmc 17 }
+
+END

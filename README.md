@@ -25,6 +25,7 @@ Schnittstelle, die sich zugleich als USB-HID-Tastatur ausgibt.
 | [docs/verdrahtungsplan.html](docs/verdrahtungsplan.html) | Interaktiver Verdrahtungsplan: alle Pins, USB-Portzuordnung, ATX-+5VSB-Option, Dual-Powering-Warnung |
 | [docs/admin-guide.pdf](docs/admin-guide.pdf) ([HTML](docs/admin-guide.html)) | Admin-Guide: Inbetriebnahme, Weboberfläche, SSH, OTA, SNMP/Zabbix, USB-Kommandozeile |
 | [docs/zabbix-template-esp-bmc.yaml](docs/zabbix-template-esp-bmc.yaml) | Fertiges Zabbix-Template (17 SNMP-Objekte) |
+| [docs/esp-bmc.mib](docs/esp-bmc.mib) | Werkzeugneutrales SNMPv2-SMI-MIB (17 Objekte) für andere SNMP-Tools als Zabbix — Checkmk, PRTG, Nagios, LibreNMS, snmpwalk/snmptranslate |
 | [docs/ZABBIX.md](docs/ZABBIX.md) | Zabbix-Integrationsleitfaden: OIDs, Template-Import, Host-Anlage, Makros, Trigger |
 | [docs/systemlast.md](docs/systemlast.md) | Systemlast: gemessenes Flash/RAM (beide PlatformIO-Umgebungen), Nebenläufigkeitsmodell (Tasks pro Komponente), CPU-Tastverhältnis-Schätzung |
 | [docs/stromversorgung.md](docs/stromversorgung.md) | Strombudget pro Komponente, USB-C- vs. ATX-+5VSB-Versorgung, Dual-Powering-Warnung |
