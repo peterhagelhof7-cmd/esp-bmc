@@ -2259,3 +2259,33 @@ ueberlappt/wird abgeschnitten, sinnvolle Spaltenbalance.
 `docs/esp-bmc-onepager.html` (neu) + `docs/esp-bmc-onepager.pdf` (neu,
 1 Seite, 114 KB). Keine Firmware-Aenderung in diesem Schritt, kein Build
 noetig.
+
+## 2026-07-18 — OTA-Marker-Scan: Chunkgroessen-Bug aus der Sensormeter-Familie uebernommen und behoben
+
+Sensormeters erster echter End-to-End-OTA-Test (HTTP-Upload ueber LAN)
+deckte auf, dass der urspruengliche NUL-Byte-sichere Marker-Scan zwar
+das eigentliche Problem loeste, dabei aber einen neuen, subtileren Bug
+einbaute: `scan_chunk_for_marker()` (`ota_manager.c`) kopierte jeden
+eingehenden Chunk in einen auf `TAIL_CAP+1024` = 1040 Byte GEDECKELTEN
+Zwischenpuffer (`s_join_buf`) und durchsuchte nur diesen - der
+Multipart-Upload-Handler in `web_server_manager.c` liefert Chunks aber
+bis `OTA_RECV_BUF` = 2048 Byte, wodurch alles jenseits der Deckelung
+STILLSCHWEIGEND uebersprungen wurde (weder gescannt noch als Tail
+vorgemerkt). Bei sensormeter wurde das durch einen echten Netzwerk-Test
+aufgedeckt und behoben, dort per Live-OTA-Upload verifiziert; hier
+identisch uebernommen, da ESP-BMC bislang noch nie an echter Hardware
+geflasht wurde und ein analoger Live-Test noch nicht moeglich ist.
+
+Fix identisch zum Sensormeter-Muster: kein kopierter Zwischenpuffer mehr
+fuer den Chunk selbst - `find_bytes()` durchsucht `data`/`len` jetzt
+direkt (beliebig gross, keine Kopie noetig). Ein kleiner Join-Puffer
+(`TAIL_CAP+MARKER_PREFIX_LEN` = 29 Byte, Stack-lokal statt statisch) wird
+nur noch fuer den echten Grenzfall gebraucht, dass der Prefix im Tail des
+vorigen Chunks beginnt und in den ersten Bytes dieses Chunks endet. Das
+alte statische `s_join_buf[JOIN_CAP]` (1040 Byte BSS) entfaellt komplett.
+
+Verifiziert per `pio run` fuer **beide** Umgebungen (n16r8 UND n8r8, wie
+inzwischen Standard fuer jeden Verifikations-Durchlauf): beide sauber,
+Flash/RAM praktisch unveraendert (n16r8: 61,8%/19,6%, n8r8: 61,6%/19,6%).
+Noch nicht auf echter Hardware getestet - ESP-BMC wurde diese Sitzung
+weiterhin nicht geflasht.

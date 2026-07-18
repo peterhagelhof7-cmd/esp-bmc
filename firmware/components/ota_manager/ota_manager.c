@@ -15,7 +15,6 @@ static const char* TAG = "ota_manager";
 #define MARKER_SUFFIX_LEN (sizeof(MARKER_SUFFIX) - 1)
 #define CAPTURE_CAP 128  // > groesstmoegliches "<PROJECT_ID>:<VERSION>"
 #define TAIL_CAP 16      // > MARKER_PREFIX_LEN - 1
-#define JOIN_CAP (TAIL_CAP + 1024)
 
 // Nur ueber ota_manager_init()'s ESP_LOGI referenziert, damit der Linker
 // ihn nicht als unbenutzt wegoptimiert (der eigentliche Zweck ist, dass
@@ -35,7 +34,6 @@ static uint8_t s_tail_buf[TAIL_CAP];
 static size_t s_tail_len;
 static uint8_t s_capture_buf[CAPTURE_CAP];
 static size_t s_capture_len;
-static uint8_t s_join_buf[JOIN_CAP];
 
 // Byte-sichere Teilstring-Suche (memmem ist auf picolibc nicht garantiert
 // verfuegbar) - bricht im Unterschied zu strstr() NICHT am ersten
@@ -113,32 +111,63 @@ static void handle_marker_payload(const uint8_t* payload, size_t len) {
 // bis MARKER_SUFFIX ab. Byte-sicher (memcmp via find_bytes), NICHT
 // string-basiert - siehe ota_manager.h fuer den Sensormeter-Bug, den das
 // vermeidet.
+//
+// 2026-07-18 korrigiert (identischer Fund+Fix wie bei sensormeter, siehe
+// dortiges docs/entscheidungen.md): die vorherige Fassung kopierte jeden
+// Chunk in einen auf TAIL_CAP+1024 = 1040 Byte GEDECKELTEN Zwischenpuffer
+// und durchsuchte nur diesen - web_server_manager.c liefert Chunks aber
+// bis OTA_RECV_BUF=2048 Byte, wodurch alles jenseits der Deckelung
+// STILLSCHWEIGEND uebersprungen wurde (weder gescannt noch als Tail
+// vorgemerkt). Fix: kein kopierter Zwischenpuffer mehr fuer den Chunk
+// selbst - find_bytes() durchsucht "data"/"len" direkt (beliebig gross,
+// keine Kopie noetig, da bereits zusammenhaengend im Speicher). Ein
+// kleiner Join-Puffer wird nur noch fuer den echten Grenzfall gebraucht,
+// dass der Prefix im vorigen Tail beginnt und in den ersten Bytes dieses
+// Chunks endet - dafuer reichen TAIL_CAP+MARKER_PREFIX_LEN Byte,
+// unabhaengig von der tatsaechlichen Chunkgroesse.
 static void scan_chunk_for_marker(const uint8_t* data, size_t len) {
   if (!s_capturing) {
-    size_t offset = 0;
+    // 1. Grenzfall: Prefix beginnt im Tail des vorigen Chunks und setzt
+    // sich in den ersten Bytes dieses Chunks fort. Nur relevant, wenn
+    // ueberhaupt ein Tail vorliegt.
+    bool spans_tail = false;
+    size_t after_prefix_in_data = 0;
     if (s_tail_len > 0) {
-      memcpy(s_join_buf, s_tail_buf, s_tail_len);
-      offset = s_tail_len;
+      uint8_t join_buf[TAIL_CAP + MARKER_PREFIX_LEN];
+      size_t head_len = len < MARKER_PREFIX_LEN ? len : MARKER_PREFIX_LEN;
+      memcpy(join_buf, s_tail_buf, s_tail_len);
+      memcpy(join_buf + s_tail_len, data, head_len);
+      size_t join_len = s_tail_len + head_len;
+      int p = find_bytes(join_buf, join_len, MARKER_PREFIX, MARKER_PREFIX_LEN);
+      // Nur als "spannend" werten, wenn der Fund tatsaechlich noch im
+      // Tail-Anteil beginnt - sonst liegt er komplett in "data" und wird
+      // gleich ohnehin von der Direktsuche unten gefunden.
+      if (p >= 0 && (size_t)p < s_tail_len) {
+        spans_tail = true;
+        after_prefix_in_data = (size_t)p + MARKER_PREFIX_LEN - s_tail_len;
+      }
     }
-    size_t copy_len = len;
-    if (offset + copy_len > JOIN_CAP) copy_len = JOIN_CAP - offset;
-    memcpy(s_join_buf + offset, data, copy_len);
-    size_t join_len = offset + copy_len;
 
-    int prefix_pos = find_bytes(s_join_buf, join_len, MARKER_PREFIX, MARKER_PREFIX_LEN);
-    if (prefix_pos < 0) {
+    // 2. Regulaerer Fall: Prefix komplett innerhalb des aktuellen Chunks -
+    // direkt auf "data"/"len" gesucht, keine Groessenbeschraenkung.
+    int prefix_pos = spans_tail ? -1 : find_bytes(data, len, MARKER_PREFIX, MARKER_PREFIX_LEN);
+
+    if (!spans_tail && prefix_pos < 0) {
+      // Kein Treffer - letzte MARKER_PREFIX_LEN-1 Byte DIESES Chunks
+      // (nicht eines gedeckelten Zwischenpuffers) als Tail fuer den
+      // naechsten Aufruf vormerken.
       size_t keep = MARKER_PREFIX_LEN > 0 ? MARKER_PREFIX_LEN - 1 : 0;
       if (keep > TAIL_CAP) keep = TAIL_CAP;
-      size_t start = join_len > keep ? join_len - keep : 0;
-      s_tail_len = join_len - start;
-      memcpy(s_tail_buf, s_join_buf + start, s_tail_len);
+      size_t start = len > keep ? len - keep : 0;
+      s_tail_len = len - start;
+      memcpy(s_tail_buf, data + start, s_tail_len);
       return;
     }
     s_capturing = true;
-    size_t after_prefix = (size_t)prefix_pos + MARKER_PREFIX_LEN;
-    size_t remaining = join_len - after_prefix;
+    size_t after_prefix = spans_tail ? after_prefix_in_data : (size_t)prefix_pos + MARKER_PREFIX_LEN;
+    size_t remaining = len - after_prefix;
     if (remaining > CAPTURE_CAP) remaining = CAPTURE_CAP;
-    memcpy(s_capture_buf, s_join_buf + after_prefix, remaining);
+    memcpy(s_capture_buf, data + after_prefix, remaining);
     s_capture_len = remaining;
     s_tail_len = 0;
   } else {
