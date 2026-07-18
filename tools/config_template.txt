@@ -1,0 +1,31 @@
+# ESP-BMC Konfigurationsvorlage
+#
+# Vor dem Speichern anpassen, dann den Editor schliessen - Setup.ps1
+# uebertraegt die Werte anschliessend automatisch per USB auf das
+# Geraet (Kommandos: system set / snmp set / thresholds set /
+# tastschutz set, siehe docs/entscheidungen.md
+# "USB-Kommandoprotokoll"). Zeilen mit "#" werden ignoriert.
+#
+# WLAN- und WireGuard-Zugangsdaten werden NICHT hier eingetragen -
+# dafuer fragt Setup.ps1 separat interaktiv (WLAN-Scan+Beitritt bzw.
+# Suche nach einer .conf-Datei im aktuellen Ordner).
+
+# Freier Geraetename, z.B. "Buero-PC" (Geraetetyp bleibt immer fest
+# "ESP-BMC", das ist per SNMP als eigenes Objekt sichtbar).
+system_name=ESP-BMC
+
+# SNMP-Communities. "public" reicht zum Lesen, "private" ist zum
+# Setzen von powerKey/resetKey per SNMP noetig - unbedingt aendern,
+# bevor das Geraet in einem groesseren/nicht vertrauenswuerdigen Netz
+# haengt.
+snmp_community=public
+snmp_rw_community=private
+
+# Schwellwerte fuer Sensor-Benachrichtigungen. Dezimaltrennzeichen ist
+# ein Punkt (60.5), kein Komma!
+ntc_temp_max_c=60.0
+dht_temp_max_c=40.0
+dht_humidity_max_pct=70.0
+
+# Tastschutz initial aktiv? (0 = nein, 1 = ja)
+tastschutz=0

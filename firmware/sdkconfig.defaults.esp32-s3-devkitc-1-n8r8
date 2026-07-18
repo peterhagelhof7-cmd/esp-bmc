@@ -1,0 +1,9 @@
+# Nur fuer env:esp32-s3-devkitc-1-n8r8 - siehe Kommentar in platformio.ini.
+# Ueberschreibt die in sdkconfig.defaults gesetzte 16-MB-Flashgroesse
+# (CONFIG_ESPTOOLPY_FLASHSIZE_16MB) auf 8 MB. ESPTOOLPY_FLASHSIZE_* ist ein
+# Kconfig-"choice" (siehe esptool_py/Kconfig.projbuild) - PlatformIOs
+# kconfgen versteht das beim Zusammenfuehren mehrerer sdkconfig.defaults*-
+# Dateien korrekt, der zuletzt gesetzte Wert gewinnt und schaltet die
+# anderen Optionen der Gruppe automatisch aus, kein manuelles "is not set"
+# fuer FLASHSIZE_16MB noetig.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y

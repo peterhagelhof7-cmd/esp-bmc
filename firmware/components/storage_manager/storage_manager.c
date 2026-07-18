@@ -10,6 +10,12 @@ static const char* PARTITION_LABEL = "storage";
 static bool s_mounted = false;
 
 void storage_manager_init(void) {
+  // format_if_mount_failed=true: eine frisch geflashte storage-Partition
+  // ist unformatiert, der erste Mount nach dem Flashen (oder nach einem
+  // Partitions-Erase) formatiert sie einmalig und dauert dadurch
+  // spuerbar laenger als jeder folgende Boot (blockiert app_main() vor
+  // usb_manager_init() - siehe docs/entscheidungen.md "Hinweis: erster
+  // Boot nach dem Flashen dauert laenger").
   esp_vfs_littlefs_conf_t conf = {
       .base_path = STORAGE_BASE_PATH,
       .partition_label = PARTITION_LABEL,
