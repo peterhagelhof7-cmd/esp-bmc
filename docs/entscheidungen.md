@@ -2289,3 +2289,50 @@ inzwischen Standard fuer jeden Verifikations-Durchlauf): beide sauber,
 Flash/RAM praktisch unveraendert (n16r8: 61,8%/19,6%, n8r8: 61,6%/19,6%).
 Noch nicht auf echter Hardware getestet - ESP-BMC wurde diese Sitzung
 weiterhin nicht geflasht.
+
+## 2026-07-18, spaeter am selben Tag — Lernuebertrag aus der Sensormeter-Familie: kritischer HTTP-Server-Stack-Overflow gefunden
+
+Nach dem produktiven Bringup-Tag bei sensormeter-poe (SNMP-Konstruktor-
+Absturz, loopTask-Stack-Overflow, SSD1306-Fehlinit, TZ-Bug, CSS-Layoutfehler)
+gezielt geprueft, welche dieser Lektionen auf ESP-BMC uebertragbar sind:
+
+- **TZ-Bug** (POSIX-TZ faellt nach Software-Reset auf UTC zurueck, wenn
+  `configTzTime()` uebersprungen wird): **nicht anwendbar** -
+  `time_manager_init()` setzt `setenv("TZ",...); tzset();` bereits
+  unbedingt am Anfang, unabhaengig vom Sync-Status. War von Anfang an
+  richtig gebaut.
+- **CSS-Select-Breitenbug** (Werksreset-Dropdown ohne Breitenbegrenzung):
+  **nicht anwendbar** - alle drei `<style>`-Bloecke in
+  `web_server_manager.c` geprueft; der einzige mit echten
+  Formularfeldern hat bereits `input,select,textarea{width:100%%;...}`.
+- **Arduino-loopTask-Stack-Overflow** (viele Manager in einer synchronen
+  `loop()`): **Analogie nicht direkt uebertragbar** - ESP-BMCs
+  Architektur hat keine vergleichbare "viele Module pro Durchlauf"-
+  Schleife (jede Komponente laeuft in ihrem eigenen Task), und
+  `app_main()`s Init-Pfad selbst hat keine grossen lokalen Puffer
+  (gezielt in allen `*_init()`-Funktionen gesucht, keine gefunden).
+
+**Aber die Ueberpruefung deckte ein staerkeres, eigenstaendiges Problem
+auf**: `httpd_config_t`s Default-Stackgroesse (`HTTPD_DEFAULT_CONFIG()`)
+betraegt nur 4096 Byte. `settings_get_handler()` (Zeile 476-742) summiert
+allein bei seinen groesseren lokalen Puffern (`page[12288]` +
+`ota_card[1280]` + `scan_html[1024]` + `users_html[512]` +
+`taster_pw_html[160]` + diverse kleinere) auf ueber 15 KB - mehr als das
+Dreifache des verfuegbaren Stacks. `root_get_handler()` (Zeile 202-369,
+die Uebersichtsseite) liegt mit `final_page[4800]` + `notify_card[640]` +
+`ssh_host_card[400]` + `ssh_card[512]` + `current_key[256]` ebenfalls
+bereits ueber 4096 Byte. **Das waere ein garantierter, reproduzierbarer
+Stack-Overflow beim allerersten Aufruf der Uebersichts- oder
+Einstellungsseite gewesen** - nie aufgefallen, weil ESP-BMC in dieser
+gesamten Sitzung nie auf echter Hardware geflasht bzw. das Web-Interface
+nie tatsaechlich aufgerufen wurde.
+
+Fix: `httpd_config.stack_size` explizit auf 24576 Byte gesetzt (deutliche
+Reserve ueber die ermittelten ~15-16 KB des groessten Handlers) - ein
+einzelner dedizierter Task, RAM-Kosten fuer ein Geraet mit 320KB+ SRAM
+vertretbar. Die Einstellung gilt serverweit fuer alle Handler (ein
+gemeinsamer Worker-Task), behebt damit sowohl `settings_get_handler()`
+als auch `root_get_handler()` gleichzeitig.
+
+Verifiziert per `pio run` fuer beide Umgebungen (n16r8/n8r8), beide
+sauber. Noch nicht auf echter Hardware getestet.

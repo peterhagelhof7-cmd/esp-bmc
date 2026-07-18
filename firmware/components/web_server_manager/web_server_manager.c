@@ -1400,6 +1400,24 @@ void web_server_manager_init(void) {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.max_uri_handlers = 28;  // Default (8) reicht seit Einstellungen+Logs nicht mehr
+  // ESP-IDFs Default-Stackgroesse fuer den httpd-Worker-Task ist 4096 Byte
+  // (siehe HTTPD_DEFAULT_CONFIG() in esp_http_server.h) - settings_get_handler()
+  // allein summiert allein bei seinen groesseren lokalen Puffern
+  // (page[12288]+ota_card[1280]+scan_html[1024]+users_html[512]+
+  // taster_pw_html[160]+diverse kleinere) auf ueber 15 KB Stack-Bedarf in
+  // EINEM Funktionsaufruf - garantierter Stack-Overflow beim ersten Aufruf
+  // von /settings mit dem Default. Gefunden bei einer Ueberpruefung, welche
+  // Lektionen aus der Sensormeter-Familie (dort: Arduino-loopTask-Overflow
+  // durch viele gleichzeitig laufende Manager) auf ESP-BMC uebertragbar
+  // sind - dort war die Analogie nicht direkt uebertragbar (ESP-BMCs
+  // app_main()-Init-Pfad hat keine grossen lokalen Puffer), aber die
+  // Ueberpruefung deckte dieses staerkere, eigenstaendige Problem im
+  // HTTP-Server-Task auf, das noch nie getriggert wurde, da ESP-BMC bislang
+  // nie auf echter Hardware geflasht/das Settings-Formular nie aufgerufen
+  // wurde. Grosszuegig auf 24 KB gesetzt (deutliche Reserve ueber den
+  // ermittelten ~15-16 KB, ein einzelner dedizierter Task, RAM-Kosten
+  // vertretbar).
+  config.stack_size = 24576;
 
   ESP_ERROR_CHECK(httpd_start(&s_server, &config));
 
