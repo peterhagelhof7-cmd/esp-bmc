@@ -25,3 +25,26 @@ CONFIG_TINYUSB_HID_COUNT=1
 
 # WebServerManager (P5) - WebSocket-Konsole braucht das explizit, Default ist aus.
 CONFIG_HTTPD_WS_SUPPORT=y
+
+# SshManager (P7) - schaltet WOLFSSH_TERM/WOLFSSL_KEY_GEN/WOLFSSL_PTHREADS
+# im mitgelieferten wolfssl/wolfssl user_settings.h-Template frei, ohne
+# die ECC/RSA-Weichen dort anzufassen (ESP32-S3 laeuft dort bereits im
+# ECC-only-Zweig). Siehe docs/entscheidungen.md "SSH-Server (P7)".
+CONFIG_ESP_ENABLE_WOLFSSH=y
+
+# WatchdogManager (RGB-LED, GPIO48) - Task Watchdog Timer ist per
+# ESP-IDF-Standard bereits aktiv (5s Timeout, Idle-Tasks beider Kerne
+# angemeldet), loest bei einem Timeout aber standardmaessig NUR eine
+# Log-Meldung aus, keinen Reboot (CONFIG_ESP_TASK_WDT_PANIC=n per
+# Default). Fuer eine echte Selbstheilung bei einer haengenden Task
+# explizit auf Panic+Reboot umgestellt - siehe
+# docs/entscheidungen.md "Watchdog-LED (RGB, GPIO48)".
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# OtaManager - Bootloader-Rollback: bleibt eine frisch geflashte OTA-
+# Firmware kurz nach dem Start haengen/stuerzt ab (bevor
+# esp_ota_mark_app_valid_cancel_rollback() in app_main() erreicht wird),
+# rollt der Bootloader beim naechsten Boot automatisch auf die vorherige
+# funktionierende Partition zurueck. Per ESP-IDF-Default aus - explizit
+# aktiviert, siehe docs/entscheidungen.md "OTA-Update ...".
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

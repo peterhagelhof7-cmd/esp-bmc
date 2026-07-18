@@ -694,7 +694,7 @@ CONFIG_BOOTLOADER_PROJECT_VER=1
 # Application Rollback
 #
 # default:
-# CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE is not set
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # end of Application Rollback
 
 #
@@ -1995,7 +1995,7 @@ CONFIG_ESP_TASK_WDT_EN=y
 # default:
 CONFIG_ESP_TASK_WDT_INIT=y
 # default:
-# CONFIG_ESP_TASK_WDT_PANIC is not set
+CONFIG_ESP_TASK_WDT_PANIC=y
 # default:
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
 # default:
@@ -3813,6 +3813,147 @@ CONFIG_LITTLEFS_ASSERTS=y
 # default:
 # CONFIG_LITTLEFS_WDT_RESET is not set
 # end of LittleFS
+
+#
+# wolfSSL
+#
+
+#
+# Hardening
+#
+# default:
+# CONFIG_ESP_WOLFSSL_WC_NO_HARDEN is not set
+# default:
+# CONFIG_ESP_WOLFSSL_TFM_TIMING_RESISTANT is not set
+# end of Hardening
+
+# default:
+# CONFIG_ESP_WOLFSSL_ENABLE_BENCHMARK is not set
+
+#
+# Benchmark Debug
+#
+# end of Benchmark Debug
+
+# default:
+# CONFIG_ESP_WOLFSSL_ENABLE_TEST is not set
+
+#
+# wolfCrypt tests
+#
+# end of wolfCrypt tests
+
+#
+# Apple HomeKit
+#
+# default:
+# CONFIG_WOLFSSL_APPLE_HOMEKIT is not set
+# end of Apple HomeKit
+
+# default:
+# CONFIG_ESP_WOLFSSL_DISABLE_MY_ECC is not set
+# default:
+# CONFIG_ESP_WOLFSSL_ENABLE_MY_USE_RSA is not set
+# default:
+# CONFIG_ESP_WOLFSSL_BENCHMARK is not set
+# default:
+# CONFIG_ESP_TLS_USING_WOLFSSL_SPECIFIED is not set
+# default:
+# CONFIG_ESP_WOLFSSL_NO_USE_FAST_MATH is not set
+
+#
+# Protocol Config
+#
+# default:
+CONFIG_WOLFSSL_HAVE_ALPN=y
+# default:
+CONFIG_WOLFSSL_ALLOW_TLS13=y
+# default:
+# CONFIG_WOLFSSL_ALLOW_TLS12 is not set
+# default:
+CONFIG_WOLFSSL_HAVE_TLS_EXTENSIONS=y
+# default:
+# CONFIG_WOLFSSL_ALT_CERT_CHAINS is not set
+# default:
+# CONFIG_WOLFSSL_HAVE_OCSP is not set
+# end of Protocol Config
+
+# default:
+# CONFIG_ESP_WOLFSSL_ALT_HARDWARE_ACCELERATION is not set
+
+#
+# wolfSSL Hardware Acceleration
+#
+# default:
+# CONFIG_ESP_WOLFSSL_DEBUG_ESP_HW_MULTI_RSAMAX_BITS is not set
+# default:
+# CONFIG_ESP_WOLFSSL_DEBUG_ESP_HW_MOD_RSAMAX_BITS is not set
+# end of wolfSSL Hardware Acceleration
+
+#
+# wolfSSL Post Quantum Kyber KEM PQ
+#
+# default:
+# CONFIG_ESP_WOLFSSL_ENABLE_MLKEM is not set
+# default:
+# CONFIG_WOLFSSL_ENABLE_KYBER is not set
+# end of wolfSSL Post Quantum Kyber KEM PQ
+
+#
+# wolfSSL Debug Options
+#
+# default:
+# CONFIG_ESP_WOLFSSL_DEBUG_WOLFSSL is not set
+# default:
+# CONFIG_ESP_WOLFSSL_NO_STACK_SIZE_BUILD_WARNING is not set
+# default:
+CONFIG_ESP_WOLFSSL_TEST_LOOP=y
+# default:
+# CONFIG_ESP_WOLFSSL_EXPERIMENTAL_SETTINGS is not set
+# end of wolfSSL Debug Options
+
+#
+# wolfSSL Customization
+#
+# default:
+CONFIG_CUSTOM_SETTING_WOLFSSL_ROOT="~/workspace/wolfssl"
+# end of wolfSSL Customization
+
+#
+# Component Config
+#
+# default:
+# CONFIG_IGNORE_ESP_IDF_WOLFSSL_COMPONENT is not set
+# default:
+# CONFIG_IGNORE_LOCAL_WOLFSSL_COMPONENT is not set
+# end of Component Config
+
+#
+# Utility Config
+#
+# default:
+# CONFIG_USE_WOLFSSL_ESP_SDK_TIME is not set
+# default:
+# CONFIG_USE_WOLFSSL_ESP_SDK_WIFI is not set
+# end of Utility Config
+# end of wolfSSL
+
+#
+# wolfSSH
+#
+CONFIG_ESP_ENABLE_WOLFSSH=y
+# default:
+# CONFIG_ESP_WOLFSSL_DEBUG_WOLFSSH is not set
+# end of wolfSSH
+
+#
+# wolfMQTT
+#
+# default:
+# CONFIG_ESP_ENABLE_WOLFMQTT is not set
+# default:
+# CONFIG_ESP_WOLFSSL_DEBUG_WOLFMQTT is not set
+# end of wolfMQTT
 # end of Component config
 
 # default:
