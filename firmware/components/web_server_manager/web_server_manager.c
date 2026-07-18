@@ -15,8 +15,12 @@
 #include "gpio_manager.h"
 #include "login_html.h"
 #include "network_manager.h"
+#include "notification_manager.h"
+#include "ota_manager.h"
 #include "sensor_history.h"
 #include "sensor_manager.h"
+#include "snmp_manager.h"
+#include "ssh_manager.h"
 #include "usb_manager.h"
 #include "user_manager.h"
 #include "wireguard_manager.h"
@@ -234,7 +238,65 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
   wireguard_manager_get_endpoint(wg_endpoint, sizeof(wg_endpoint));
   bool wg_up = wireguard_manager_is_up();
 
-  char final_page[3200];
+  // SSH-Key-Selbstbedienung (webconfig.txt: "SSH User"/"Admin" = "...
+  // + hinterlegen eines SSH key") - nur fuer Rollen mit SSH-Zugang
+  // sichtbar, jeder Nutzer verwaltet nur seinen eigenen Schluessel.
+  char ssh_card[512] = "";
+  if (role >= USER_ROLE_SSH_USER) {
+    char current_key[256];
+    bool has_key = user_manager_get_ssh_public_key(username, current_key, sizeof(current_key));
+    char key_status[64];
+    if (has_key) {
+      snprintf(key_status, sizeof(key_status), "hinterlegt (%.24s...)", current_key);
+    } else {
+      snprintf(key_status, sizeof(key_status), "kein Schluessel hinterlegt");
+    }
+    snprintf(ssh_card, sizeof(ssh_card),
+             "<div class=\"card\"><b>SSH-Zugang</b><br>Port 22, Benutzername/Passwort oder Public-Key "
+             "(nur ECDSA/Ed25519, kein RSA).<br>Eigener Schluessel: %s"
+             "<form method=\"post\" action=\"/account/ssh-key\">"
+             "<textarea name=\"ssh_public_key\" rows=\"2\" "
+             "placeholder=\"ecdsa-sha2-nistp256 AAAA... oder ssh-ed25519 AAAA...\"></textarea>"
+             "<button type=\"submit\">Speichern</button>"
+             "</form></div>",
+             key_status);
+  }
+
+  // SSH-Host-Key ist NICHT vertraulich (wird bei jedem Handshake ohnehin
+  // an den Client uebertragen) - deshalb fuer jeden angemeldeten Nutzer
+  // sichtbar auf der Uebersichtsseite, nicht erst auf der
+  // Einstellungen-Seite versteckt. Dient dem Nutzer zur
+  // Out-of-Band-Pruefung vor dem allerersten SSH-Connect
+  // (Trust-on-First-Use).
+  char ssh_host_card[400];
+  snprintf(ssh_host_card, sizeof(ssh_host_card),
+           "<div class=\"card\"><b>SSH-Host-Key</b><br>"
+           "Zur Pruefung vor der ersten Verbindung (nicht vertraulich):<br>"
+           "Fingerprint: <code>%s</code><br>"
+           "<textarea readonly rows=\"2\" onclick=\"this.select()\">%s</textarea>"
+           "</div>",
+           ssh_manager_get_host_key_fingerprint(), ssh_manager_get_host_public_key_line());
+
+  // E-Mail-Benachrichtigung: jeder Nutzer verwaltet seine eigene Adresse
+  // + Aktiv-Schalter selbst (Selbstbedienung wie beim SSH-Key oben, aber
+  // ohne Rollenbeschraenkung - fuer jede Rolle sinnvoll).
+  char notify_email[64] = "";
+  bool notify_enabled = false;
+  user_manager_get_notification_email(username, notify_email, sizeof(notify_email), &notify_enabled);
+  char notify_card[640];
+  snprintf(notify_card, sizeof(notify_card),
+           "<div class=\"card\"><b>E-Mail-Benachrichtigung</b><br>"
+           "Bei Schwellwert-Ueberschreitung, sofern vom Verwalter ein SMTP-Server hinterlegt ist "
+           "(Einstellungen-Seite).<br>"
+           "<form method=\"post\" action=\"/account/notify\">"
+           "<label><input type=\"checkbox\" name=\"enabled\" value=\"1\" "
+           "style=\"width:auto;display:inline-block;\" %s> aktiv</label><br>"
+           "<input type=\"text\" name=\"email\" value=\"%s\" placeholder=\"name@beispiel.de\">"
+           "<button type=\"submit\">Speichern</button>"
+           "</form></div>",
+           notify_enabled ? "checked" : "", notify_email);
+
+  char final_page[4800];
   snprintf(final_page, sizeof(final_page),
            "<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"utf-8\">"
            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -251,6 +313,10 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
            ".hdd-on{background:#a63d2e;animation:hddblink 1s infinite;}.hdd-off{background:#ccc;}"
            "@keyframes hddblink{50%%{opacity:0.25;}}"
            "canvas{max-width:100%%;background:#fbfaf7;border:1px solid #e4e1d8;border-radius:6px;}"
+           "textarea{width:100%%;padding:0.4rem;box-sizing:border-box;border:1px solid #ccc;"
+           "border-radius:4px;font-family:inherit;margin-top:0.4rem;}"
+           "button{margin-top:0.4rem;padding:0.5rem 1rem;background:#0f1f3d;color:#fff;border:none;"
+           "border-radius:4px;cursor:pointer;}"
            "a{color:#0f1f3d;}"
            "</style></head><body>"
            "<h1>ESP-BMC &mdash; Uebersicht</h1>"
@@ -270,6 +336,9 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
            "</div>"
            "<div class=\"card\"><b>Webconsole</b><br>"
            "<a href=\"/console\">Zur interaktiven Konsole</a></div>"
+           "%s"
+           "%s"
+           "%s"
            "<div class=\"card\"><b>Einstellungen</b><br>"
            "<a href=\"/settings\">Zur Einstellungen-Seite</a></div>"
            "<div class=\"card\"><b>Logs</b><br>"
@@ -286,10 +355,63 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
            username, role_name(role), ip, wg_local_ip, wg_endpoint, wg_up ? "vpn-up" : "vpn-down",
            wg_up ? "verbunden" : "getrennt", ntc_str, dht_str, (long long)uptime_s, power_led_on ? "on" : "off",
            power_led_on ? "aktiv" : "inaktiv", hdd_led_recent ? "hdd-on" : "hdd-off",
-           hdd_led_recent ? "aktiv" : "inaktiv");
+           hdd_led_recent ? "aktiv" : "inaktiv", ssh_host_card, notify_card, ssh_card);
 
   httpd_resp_set_type(req, "text/html");
   httpd_resp_send(req, final_page, HTTPD_RESP_USE_STRLEN);
+  return ESP_OK;
+}
+
+// SSH-Public-Key-Selbstbedienung (P7, webconfig.txt "... + hinterlegen
+// eines SSH key") - jeder Nutzer mit SSH-Zugang verwaltet nur seinen
+// EIGENEN Schluessel (kein Admin-Formular fuer fremde Konten hier -
+// dafuer gibt es keinen Bedarf, der Nutzer bringt seinen eigenen
+// oeffentlichen Schluessel selbst mit).
+static esp_err_t account_ssh_key_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_SSH_USER, username, &role)) return ESP_OK;
+
+  char body[300] = {0};
+  size_t to_read = req->content_len < sizeof(body) - 1 ? req->content_len : sizeof(body) - 1;
+  int received = httpd_req_recv(req, body, to_read);
+  if (received <= 0) return ESP_FAIL;
+  body[received] = '\0';
+
+  char ssh_key[280];
+  parse_form_field(body, "ssh_public_key", ssh_key, sizeof(ssh_key));
+
+  bool ok = user_manager_set_ssh_public_key(username, ssh_key);
+  ESP_LOGI(TAG, "%s hat den eigenen SSH-Public-Key geaendert: %s", username, ok ? "erfolgreich" : "fehlgeschlagen");
+  if (ok) audit_log_add("SSH-Public-Key geaendert (Web)");
+  redirect_to(req, ok ? "/" : "/?failed=sshkey");
+  return ESP_OK;
+}
+
+// E-Mail-Benachrichtigung-Selbstbedienung - jeder angemeldete Nutzer
+// verwaltet nur seine EIGENE Adresse, keine Rollenbeschraenkung (anders
+// als der SSH-Key oben, der nur fuer SSH_USER+ sichtbar ist).
+static esp_err_t account_notify_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_LESER, username, &role)) return ESP_OK;
+
+  char body[128] = {0};
+  size_t to_read = req->content_len < sizeof(body) - 1 ? req->content_len : sizeof(body) - 1;
+  int received = httpd_req_recv(req, body, to_read);
+  if (received <= 0) return ESP_FAIL;
+  body[received] = '\0';
+
+  char email[64], enabled_str[4];
+  parse_form_field(body, "email", email, sizeof(email));
+  parse_form_field(body, "enabled", enabled_str, sizeof(enabled_str));
+  bool enabled = enabled_str[0] != '\0';
+
+  bool ok = user_manager_set_notification_email(username, email, enabled);
+  ESP_LOGI(TAG, "%s hat die eigene Benachrichtigungsadresse geaendert: %s", username,
+           ok ? "erfolgreich" : "fehlgeschlagen");
+  if (ok) audit_log_add("Benachrichtigungsadresse geaendert (Web)");
+  redirect_to(req, ok ? "/" : "/?failed=notify");
   return ESP_OK;
 }
 
@@ -366,6 +488,27 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
   char wg_local_ip[16];
   wireguard_manager_get_local_address(wg_local_ip, sizeof(wg_local_ip));
 
+  char snmp_community[32];
+  snmp_manager_get_community(snmp_community, sizeof(snmp_community));
+  char snmp_rw_community[32];
+  snmp_manager_get_rw_community(snmp_rw_community, sizeof(snmp_rw_community));
+
+  char syslog_server[64];
+  uint16_t syslog_port;
+  notification_manager_get_syslog(syslog_server, sizeof(syslog_server), &syslog_port);
+  char smtp_server[64], smtp_sender[64], smtp_username[64];
+  uint16_t smtp_port;
+  notification_manager_get_smtp(smtp_server, sizeof(smtp_server), &smtp_port, smtp_sender, sizeof(smtp_sender),
+                                 smtp_username, sizeof(smtp_username));
+
+  char device_name[32];
+  config_manager_get_device_name(device_name, sizeof(device_name));
+  const char* device_type = config_manager_get_device_type();
+
+  const char* tastschutz_checked = config_manager_is_tastschutz_active() ? "checked" : "";
+  const char* power_led_checked = gpio_manager_power_led_out_state() ? "checked" : "";
+  const char* hdd_led_checked = gpio_manager_hdd_led_out_state() ? "checked" : "";
+
   // Optionaler WLAN-Scan ueber "?scan=1" - kein JavaScript/AJAX in dieser
   // Ausbaustufe, ein einfacher Seiten-Reload reicht.
   char scan_html[1024] = "";
@@ -405,7 +548,40 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
              "style=\"width:auto;display:inline-block;\">");
   }
 
-  char page[8192];
+  // Firmware-Update (OTA) - Admin-only (hoehere Schwelle als der Rest der
+  // Einstellungen-Seite, ein Fehlgriff hier ist folgenreicher als z.B.
+  // eine falsche SNMP-Community). Zwei getrennte Formulare statt einer
+  // Checkbox im selben Formular - ESP-IDFs httpd hat keinen eingebauten
+  // Multipart-Parser, ein zusaetzliches Textfeld VOR dem Datei-Feld aus
+  // demselben Multipart-Body herauszuloesen haette den Upload-Handler
+  // (siehe settings_ota_upload_post_handler) unnoetig verkompliziert -
+  // "Downgrade erzwingen" kommt stattdessen als Query-Parameter auf der
+  // Formular-Action, dafuer reicht ein zweites Formular.
+  char ota_card[1280] = "";
+  if (role >= USER_ROLE_ADMIN) {
+    snprintf(ota_card, sizeof(ota_card),
+             "<div class=\"card\"><h2>Firmware-Update (OTA)</h2>"
+             "<p>Laufende Version: <span class=\"mono\">%s</span> (erste Beta). Die .bin muss ein "
+             "gueltiges ESP-BMC-Erkennungsmerkmal enthalten (verhindert Cross-Flashen eines anderen "
+             "Projekts) und darf keine aeltere Version sein - ausser ueber das zweite Formular "
+             "bewusst freigegeben.</p>"
+             "<form method=\"post\" action=\"/settings/ota/upload\" enctype=\"multipart/form-data\" "
+             "onsubmit=\"return confirm('Firmware wirklich aktualisieren? Das Geraet startet danach "
+             "neu.');\">"
+             "<input type=\"file\" name=\"firmware\" accept=\".bin\" required>"
+             "<button type=\"submit\">Hochladen &amp; aktualisieren</button>"
+             "</form>"
+             "<form method=\"post\" action=\"/settings/ota/upload?force_downgrade=1\" "
+             "enctype=\"multipart/form-data\" style=\"margin-top:0.6rem;\" onsubmit=\"return "
+             "confirm('ACHTUNG: Downgrade erzwungen - auch eine aeltere Version wird akzeptiert. "
+             "Wirklich fortfahren?');\">"
+             "<input type=\"file\" name=\"firmware\" accept=\".bin\" required>"
+             "<button type=\"submit\">Hochladen (Downgrade erzwingen)</button>"
+             "</form></div>",
+             ota_manager_get_version());
+  }
+
+  char page[12288];
   snprintf(
       page, sizeof(page),
       "<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"utf-8\">"
@@ -467,6 +643,36 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       "<button type=\"submit\">Benutzer anlegen</button>"
       "</form></div>"
 
+      "<div class=\"card\"><h2>SNMP</h2>"
+      "<p>Agent auf Port 161, private MIB unter 1.3.6.1.4.1.99999.10 &middot; "
+      "kein GetBulk, Zabbix-Interface braucht \"Use bulk requests\" aus. Nur powerKey/resetKey "
+      "sind per SET schreibbar (loesen einen Tastendruck aus), dafuer die separate "
+      "Schreib-Community noetig.</p>"
+      "<form method=\"post\" action=\"/settings/snmp\">"
+      "<label>Community (Lesen)</label><input type=\"text\" name=\"community\" value=\"%s\" required>"
+      "<label>Community (Schreiben - powerKey/resetKey)</label>"
+      "<input type=\"text\" name=\"rw_community\" value=\"%s\" required>"
+      "<button type=\"submit\">Uebernehmen</button>"
+      "</form></div>"
+
+      "<div class=\"card\"><h2>Benachrichtigungen</h2>"
+      "<p>Zwei unabhaengige Wege bei Schwellwert-Ueberschreitung: Syslog (UDP, an einen zentralen "
+      "Log-Server) und SMTP (Klartext, bewusst OHNE TLS - siehe docs/entscheidungen.md, daher nur fuer "
+      "ein vertrauenswuerdiges internes Netz/Relay gedacht). Leerer Server deaktiviert den jeweiligen "
+      "Weg. E-Mail-Empfaenger verwaltet jeder Nutzer selbst auf der Uebersichtsseite.</p>"
+      "<form method=\"post\" action=\"/settings/notify\">"
+      "<label>Syslog-Server (leer = aus)</label><input type=\"text\" name=\"syslog_server\" value=\"%s\">"
+      "<label>Syslog-Port</label><input type=\"number\" name=\"syslog_port\" value=\"%u\">"
+      "<label>SMTP-Server (leer = aus)</label><input type=\"text\" name=\"smtp_server\" value=\"%s\">"
+      "<label>SMTP-Port</label><input type=\"number\" name=\"smtp_port\" value=\"%u\">"
+      "<label>Absender-Adresse</label><input type=\"text\" name=\"smtp_sender\" value=\"%s\">"
+      "<label>Benutzername (leer = keine Authentifizierung)</label>"
+      "<input type=\"text\" name=\"smtp_username\" value=\"%s\">"
+      "<label>Passwort (leer lassen = unveraendert)</label>"
+      "<input type=\"password\" name=\"smtp_password\" placeholder=\"unveraendert\">"
+      "<button type=\"submit\">Uebernehmen</button>"
+      "</form></div>"
+
       "<div class=\"card\"><h2>Taster-Steuerung</h2>"
       "<form method=\"post\" action=\"/settings/taster\" style=\"display:inline-block;margin-right:0.5rem;\">"
       "<input type=\"hidden\" name=\"action\" value=\"power_push\">%s"
@@ -480,7 +686,31 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       "<button type=\"submit\">Reset</button></form>"
       "</div>"
 
+      "<div class=\"card\"><h2>Tastschutz</h2>"
+      "<form method=\"post\" action=\"/settings/tastschutz\">"
+      "<label><input type=\"checkbox\" name=\"active\" value=\"1\" style=\"width:auto;display:inline-block;\" "
+      "%s> Tastendruck-Weiterleitung sperren (Web/USB/SNMP + physische Taster)</label><br>"
+      "<button type=\"submit\">Uebernehmen</button>"
+      "</form></div>"
+
+      "<div class=\"card\"><h2>Gehaeuse-LEDs</h2>"
+      "<form method=\"post\" action=\"/settings/led\">"
+      "<label><input type=\"checkbox\" name=\"power_led\" value=\"1\" style=\"width:auto;display:inline-block;\" "
+      "%s> Power-LED an</label><br>"
+      "<label><input type=\"checkbox\" name=\"hdd_led\" value=\"1\" style=\"width:auto;display:inline-block;\" "
+      "%s> HDD-LED an</label><br>"
+      "<button type=\"submit\">Uebernehmen</button>"
+      "</form></div>"
+
+      "%s"
+
       "<div class=\"card\"><h2>System</h2>"
+      "<p>Geraetetyp: %s (fest) &middot; Firmware-Version: %s</p>"
+      "<form method=\"post\" action=\"/settings/system\">"
+      "<label>Systemname (frei waehlbar, z.B. \"Buero-PC\")</label>"
+      "<input type=\"text\" name=\"name\" value=\"%s\" maxlength=\"31\" required>"
+      "<button type=\"submit\">Uebernehmen</button>"
+      "</form>"
       "<p><a href=\"/settings/config-download\">Gesamtkonfiguration herunterladen</a> &middot; "
       "<a href=\"/logs\">Zur Logs-Seite</a></p>"
       "<form method=\"post\" action=\"/settings/reboot\" onsubmit=\"return confirm('Geraet wirklich neu "
@@ -500,8 +730,10 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       "</body></html>",
       username, role_name(role), ip, is_static ? "statisch" : "DHCP", is_static ? "" : " selected",
       is_static ? " selected" : "", cur_ip, cur_mask, cur_gw, scan_html,
-      wg_uploaded ? "hochgeladen" : "Kconfig-Platzhalter", wg_local_ip, users_html, taster_pw_html, taster_pw_html,
-      taster_pw_html);
+      wg_uploaded ? "hochgeladen" : "Kconfig-Platzhalter", wg_local_ip, users_html, snmp_community,
+      snmp_rw_community, syslog_server, (unsigned)syslog_port, smtp_server, (unsigned)smtp_port, smtp_sender,
+      smtp_username, taster_pw_html, taster_pw_html, taster_pw_html, tastschutz_checked, power_led_checked,
+      hdd_led_checked, ota_card, device_type, ota_manager_get_version(), device_name);
 
   httpd_resp_set_type(req, "text/html");
   httpd_resp_send(req, page, HTTPD_RESP_USE_STRLEN);
@@ -570,6 +802,165 @@ static esp_err_t settings_wireguard_delete_post_handler(httpd_req_t* req) {
   return ESP_OK;
 }
 
+// Byte-sichere Teilstring-Suche (memmem ist auf picolibc nicht garantiert
+// verfuegbar) - genau wie ota_manager's eigene find_bytes(), hier nicht
+// geteilt (kleines Utility, gleiche Duplizierungs-Konvention wie an
+// anderen Stellen dieser Codebasis, z.B. role_name()).
+static int find_bytes(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len) {
+  if (needle_len == 0 || haystack_len < needle_len) return -1;
+  for (size_t i = 0; i + needle_len <= haystack_len; i++) {
+    if (memcmp(haystack + i, needle, needle_len) == 0) return (int)i;
+  }
+  return -1;
+}
+
+// Firmware-Update (OTA) - siehe ota_manager.h fuer die Identitaets-/
+// Downgrade-Pruefung (Marker-Scan). ESP-IDFs esp_http_server hat KEINEN
+// eingebauten Multipart-Parser (anders als z.B. ESPAsyncWebServer bei der
+// Sensormeter-Familie) - deshalb hier von Hand: der Multipart-Header-Block
+// (bis zur ersten Leerzeile "\r\n\r\n") wird uebersprungen, der
+// abschliessende Boundary-Trenner am Dateiende wird ueber einen
+// Tail-Puffer erkannt und NICHT mit in die OTA-Partition geschrieben -
+// gleiches Byte-Tail-Prinzip wie ota_manager's eigener Marker-Scan
+// (Praefix/Suffix koennen an einer Chunk-Grenze zerschnitten sein).
+#define OTA_RECV_BUF 2048
+#define OTA_TAIL_CAP 160
+
+static esp_err_t settings_ota_upload_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_ADMIN, username, &role)) return ESP_OK;
+
+  char content_type[160] = "";
+  httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type));
+  char* boundary_param = strstr(content_type, "boundary=");
+  if (!boundary_param) {
+    ESP_LOGW(TAG, "OTA-Upload ohne Multipart-Boundary abgelehnt");
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "Update abgelehnt: kein Multipart-Formular", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+  }
+  char boundary[96];
+  snprintf(boundary, sizeof(boundary), "--%s", boundary_param + 9);
+  size_t boundary_len = strlen(boundary);
+
+  char query[32] = "";
+  bool allow_downgrade =
+      httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK && strstr(query, "force_downgrade=1") != NULL;
+
+  if (!ota_manager_begin(allow_downgrade)) {
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "Update abgelehnt: keine OTA-Partition verfuegbar", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+  }
+
+  uint8_t* buf = malloc(OTA_RECV_BUF);
+  uint8_t* joined = malloc(OTA_TAIL_CAP + OTA_RECV_BUF);
+  if (!buf || !joined) {
+    free(buf);
+    free(joined);
+    ota_manager_end();  // Marker nie gefunden -> verwirft die Partition intern
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "Update abgelehnt: kein Speicher", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+  }
+
+  int remaining = req->content_len;
+  bool header_skipped = false;
+  bool write_ok = true;
+  bool boundary_seen = false;
+  uint8_t tail[OTA_TAIL_CAP];
+  size_t tail_len = 0;
+
+  while (remaining > 0) {
+    int to_read = remaining < OTA_RECV_BUF ? remaining : OTA_RECV_BUF;
+    int r = httpd_req_recv(req, (char*)buf, to_read);
+    if (r <= 0) {
+      write_ok = false;
+      break;
+    }
+    remaining -= r;
+
+    uint8_t* chunk = buf;
+    size_t chunk_len = (size_t)r;
+
+    if (!header_skipped) {
+      int hdr_end = find_bytes(chunk, chunk_len, (const uint8_t*)"\r\n\r\n", 4);
+      if (hdr_end < 0) {
+        // Multipart-Header ueberschreitet den ersten Chunk - in der Praxis
+        // nie der Fall (wenige hundert Byte, OTA_RECV_BUF ist 2048) -
+        // sauber abbrechen statt falsch weiterzumachen.
+        write_ok = false;
+        break;
+      }
+      size_t skip = (size_t)hdr_end + 4;
+      chunk += skip;
+      chunk_len -= skip;
+      header_skipped = true;
+    }
+    if (chunk_len == 0) continue;
+
+    memcpy(joined, tail, tail_len);
+    memcpy(joined + tail_len, chunk, chunk_len);
+    size_t joined_len = tail_len + chunk_len;
+
+    int boundary_pos = find_bytes(joined, joined_len, (const uint8_t*)boundary, boundary_len);
+    if (boundary_pos >= 0) {
+      size_t file_len = (size_t)boundary_pos;
+      if (file_len > 0) write_ok = write_ok && ota_manager_write_chunk(joined, file_len);
+      tail_len = 0;
+      boundary_seen = true;
+      break;
+    }
+
+    size_t keep = boundary_len > 0 ? boundary_len - 1 : 0;
+    if (keep > OTA_TAIL_CAP) keep = OTA_TAIL_CAP;
+    size_t flush_len = joined_len > keep ? joined_len - keep : 0;
+    if (flush_len > 0) write_ok = write_ok && ota_manager_write_chunk(joined, flush_len);
+    tail_len = joined_len - flush_len;
+    memcpy(tail, joined + flush_len, tail_len);
+  }
+
+  free(buf);
+  free(joined);
+  if (!boundary_seen) write_ok = false;  // Dateiende (Boundary) nie gesehen -> unvollstaendiger Upload
+
+  bool ok = write_ok && ota_manager_end();
+
+  if (ok) {
+    char event[80];
+    snprintf(event, sizeof(event), "OTA-Update erfolgreich (%s) durch %s", ota_manager_get_version(), username);
+    audit_log_add(event);
+    ESP_LOGW(TAG, "%s", event);
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "Update erfolgreich, Geraet startet neu...", HTTPD_RESP_USE_STRLEN);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+    return ESP_OK;
+  }
+
+  const char* reason;
+  if (!ota_manager_marker_found()) {
+    reason = "kein gueltiges Firmware-Erkennungsmerkmal gefunden";
+  } else if (!ota_manager_identity_matches()) {
+    reason = "Datei stammt von einem anderen Projekt";
+  } else if (!ota_manager_version_allowed()) {
+    reason = "Version ist aelter als die laufende (Downgrade nicht erzwungen)";
+  } else {
+    reason = "Schreib-/Uebertragungsfehler";
+  }
+  char event[160];
+  snprintf(event, sizeof(event), "OTA-Update abgelehnt (%s) durch %s", reason, username);
+  audit_log_add(event);
+  ESP_LOGW(TAG, "%s", event);
+
+  char resp_body[160];
+  snprintf(resp_body, sizeof(resp_body), "Update abgelehnt: %s", reason);
+  httpd_resp_set_type(req, "text/plain");
+  httpd_resp_send(req, resp_body, HTTPD_RESP_USE_STRLEN);
+  return ESP_OK;
+}
+
 static esp_err_t settings_users_post_handler(httpd_req_t* req) {
   char username[32];
   user_role_t role;
@@ -589,6 +980,87 @@ static esp_err_t settings_users_post_handler(httpd_req_t* req) {
   bool ok = user_manager_create(new_username, new_password, (user_role_t)atoi(role_str));
   ESP_LOGI(TAG, "%s hat Benutzer \"%s\" angelegt: %s", username, new_username, ok ? "erfolgreich" : "fehlgeschlagen");
   redirect_to(req, ok ? "/settings" : "/settings?failed=user");
+  return ESP_OK;
+}
+
+// SNMP-Communities (docs/entscheidungen.md "SNMP-Agent") - Lese- und
+// Schreib-Community sind konfigurierbar, alles andere (Port, OID-Tabelle,
+// v1-only-Semantik) ist fest verdrahtet.
+static esp_err_t settings_snmp_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_VERWALTER, username, &role)) return ESP_OK;
+
+  char body[96] = {0};
+  size_t to_read = req->content_len < sizeof(body) - 1 ? req->content_len : sizeof(body) - 1;
+  int received = httpd_req_recv(req, body, to_read);
+  if (received <= 0) return ESP_FAIL;
+  body[received] = '\0';
+
+  char community[32], rw_community[32];
+  parse_form_field(body, "community", community, sizeof(community));
+  parse_form_field(body, "rw_community", rw_community, sizeof(rw_community));
+
+  bool ok = snmp_manager_set_community(community) && snmp_manager_set_rw_community(rw_community);
+  ESP_LOGI(TAG, "%s hat die SNMP-Communities geaendert: %s", username, ok ? "erfolgreich" : "fehlgeschlagen");
+  redirect_to(req, ok ? "/settings" : "/settings?failed=snmp");
+  return ESP_OK;
+}
+
+// Benachrichtigungswege (Syslog + SMTP ohne TLS, siehe
+// docs/entscheidungen.md "Benachrichtigungswege"). Passwort-Feld leer
+// gelassen = unveraendert, siehe notification_manager.h.
+static esp_err_t settings_notify_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_VERWALTER, username, &role)) return ESP_OK;
+
+  char body[400] = {0};
+  size_t to_read = req->content_len < sizeof(body) - 1 ? req->content_len : sizeof(body) - 1;
+  int received = httpd_req_recv(req, body, to_read);
+  if (received <= 0) return ESP_FAIL;
+  body[received] = '\0';
+
+  char syslog_server[64], syslog_port_str[8];
+  char smtp_server[64], smtp_port_str[8], smtp_sender[64], smtp_username[64], smtp_password[64];
+  parse_form_field(body, "syslog_server", syslog_server, sizeof(syslog_server));
+  parse_form_field(body, "syslog_port", syslog_port_str, sizeof(syslog_port_str));
+  parse_form_field(body, "smtp_server", smtp_server, sizeof(smtp_server));
+  parse_form_field(body, "smtp_port", smtp_port_str, sizeof(smtp_port_str));
+  parse_form_field(body, "smtp_sender", smtp_sender, sizeof(smtp_sender));
+  parse_form_field(body, "smtp_username", smtp_username, sizeof(smtp_username));
+  parse_form_field(body, "smtp_password", smtp_password, sizeof(smtp_password));
+
+  uint16_t syslog_port = syslog_port_str[0] ? (uint16_t)atoi(syslog_port_str) : 514;
+  uint16_t smtp_port = smtp_port_str[0] ? (uint16_t)atoi(smtp_port_str) : 25;
+
+  bool ok = notification_manager_set_syslog(syslog_server, syslog_port) &&
+            notification_manager_set_smtp(smtp_server, smtp_port, smtp_sender, smtp_username, smtp_password);
+  ESP_LOGI(TAG, "%s hat die Benachrichtigungswege geaendert: %s", username, ok ? "erfolgreich" : "fehlgeschlagen");
+  if (ok) audit_log_add("Benachrichtigungswege geaendert (Web)");
+  redirect_to(req, ok ? "/settings" : "/settings?failed=notify");
+  return ESP_OK;
+}
+
+// Systemname (webconfig.txt/was-loggen.txt "system name") - frei
+// vergebbar, im Gegensatz zum festen Systemtyp "ESP-BMC".
+static esp_err_t settings_system_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_VERWALTER, username, &role)) return ESP_OK;
+
+  char body[64] = {0};
+  size_t to_read = req->content_len < sizeof(body) - 1 ? req->content_len : sizeof(body) - 1;
+  int received = httpd_req_recv(req, body, to_read);
+  if (received <= 0) return ESP_FAIL;
+  body[received] = '\0';
+
+  char name[32];
+  parse_form_field(body, "name", name, sizeof(name));
+
+  bool ok = config_manager_set_device_name(name);
+  ESP_LOGI(TAG, "%s hat den Systemnamen geaendert: %s", username, ok ? "erfolgreich" : "fehlgeschlagen");
+  redirect_to(req, ok ? "/settings" : "/settings?failed=system");
   return ESP_OK;
 }
 
@@ -645,6 +1117,65 @@ static esp_err_t settings_taster_post_handler(httpd_req_t* req) {
   audit_log_add(event);
   ESP_LOGI(TAG, "%s", event);
   redirect_to(req, ok ? "/settings" : "/settings?failed=taster");
+  return ESP_OK;
+}
+
+// Tastschutz an/aus (Lastenheft Abschnitt 8: "Tastschutz aktivieren/
+// deaktivieren" - bislang nur per USB-Kommando moeglich, hier die
+// fehlende Web-Anbindung nachgezogen). Checkbox-Formular: das Feld
+// "active" ist im Body nur vorhanden, wenn die Checkbox angehakt war.
+static esp_err_t settings_tastschutz_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_VERWALTER, username, &role)) return ESP_OK;
+
+  char body[32] = {0};
+  size_t to_read = req->content_len < sizeof(body) - 1 ? req->content_len : sizeof(body) - 1;
+  int received = httpd_req_recv(req, body, to_read);
+  if (received <= 0) return ESP_FAIL;
+  body[received] = '\0';
+
+  char active_str[4];
+  parse_form_field(body, "active", active_str, sizeof(active_str));
+  bool active = active_str[0] != '\0';
+
+  config_manager_set_tastschutz(active);
+  char event[96];
+  snprintf(event, sizeof(event), "Tastschutz %s von %s (Web)", active ? "aktiviert" : "deaktiviert", username);
+  audit_log_add(event);
+  ESP_LOGI(TAG, "%s", event);
+  redirect_to(req, "/settings");
+  return ESP_OK;
+}
+
+// Gehaeuse-LED-Ansteuerung (Lastenheft Abschnitt 5: "Gehaeuse-Power-LED
+// ansteuern"/"Gehaeuse-HDD-LED ansteuern" - die GPIO-Funktion existierte
+// bereits, hatte aber keine Web-/USB-Anbindung). Zwei unabhaengige
+// Checkboxen in einem Formular.
+static esp_err_t settings_led_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_VERWALTER, username, &role)) return ESP_OK;
+
+  char body[64] = {0};
+  size_t to_read = req->content_len < sizeof(body) - 1 ? req->content_len : sizeof(body) - 1;
+  int received = httpd_req_recv(req, body, to_read);
+  if (received <= 0) return ESP_FAIL;
+  body[received] = '\0';
+
+  char power_str[4], hdd_str[4];
+  parse_form_field(body, "power_led", power_str, sizeof(power_str));
+  parse_form_field(body, "hdd_led", hdd_str, sizeof(hdd_str));
+  bool power_on = power_str[0] != '\0';
+  bool hdd_on = hdd_str[0] != '\0';
+
+  gpio_manager_set_power_led(power_on);
+  gpio_manager_set_hdd_led(hdd_on);
+  char event[112];
+  snprintf(event, sizeof(event), "Gehaeuse-LEDs gesetzt von %s (Web): Power=%d HDD=%d", username, power_on, hdd_on);
+  audit_log_add(event);
+  ESP_LOGI(TAG, "%s", event);
+  redirect_to(req, "/settings");
   return ESP_OK;
 }
 
@@ -726,6 +1257,7 @@ static esp_err_t settings_reset_post_handler(httpd_req_t* req) {
   network_manager_reset();
   wireguard_manager_delete_config();
   user_manager_reset_to_default();
+  notification_manager_reset_to_defaults();
   if (include_values) sensor_history_reset();
 
   char event[112];
@@ -816,6 +1348,7 @@ static esp_err_t logs_audit_download_handler(httpd_req_t* req) {
 static esp_err_t ws_console_handler(httpd_req_t* req) {
   if (req->method == HTTP_GET) {
     s_ws_console_fd = httpd_req_to_sockfd(req);
+    usb_manager_console_claim(CONSOLE_OWNER_WEB);
     ESP_LOGI(TAG, "WebSocket-Konsole verbunden (fd=%d)", s_ws_console_fd);
     return ESP_OK;
   }
@@ -842,6 +1375,13 @@ static void console_pump_task(void* arg) {
   uint8_t buf[128];
 
   for (;;) {
+    // Nur leeren, solange die Web-Konsole den gemeinsamen CDC-Kanal
+    // tatsaechlich haelt - sonst wuerde eine parallele SSH-Sitzung (P7)
+    // um dieselben Bytes konkurrieren (usb_manager_console_*).
+    if (usb_manager_console_owner() != CONSOLE_OWNER_WEB) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
     size_t n = 0;
     uint8_t byte;
     while (n < sizeof(buf) && xQueueReceive(rx_queue, &byte, n == 0 ? pdMS_TO_TICKS(200) : 0) == pdTRUE) {
@@ -859,7 +1399,7 @@ static void console_pump_task(void* arg) {
 void web_server_manager_init(void) {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.uri_match_fn = httpd_uri_match_wildcard;
-  config.max_uri_handlers = 20;  // Default (8) reicht seit Einstellungen+Logs nicht mehr
+  config.max_uri_handlers = 28;  // Default (8) reicht seit Einstellungen+Logs nicht mehr
 
   ESP_ERROR_CHECK(httpd_start(&s_server, &config));
 
@@ -867,6 +1407,10 @@ void web_server_manager_init(void) {
   httpd_uri_t login_post = {.uri = "/login", .method = HTTP_POST, .handler = login_post_handler};
   httpd_uri_t logout_get = {.uri = "/logout", .method = HTTP_GET, .handler = logout_get_handler};
   httpd_uri_t root_get = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler};
+  httpd_uri_t account_ssh_key_post = {
+      .uri = "/account/ssh-key", .method = HTTP_POST, .handler = account_ssh_key_post_handler};
+  httpd_uri_t account_notify_post = {
+      .uri = "/account/notify", .method = HTTP_POST, .handler = account_notify_post_handler};
   httpd_uri_t api_graph_get = {.uri = "/api/graph", .method = HTTP_GET, .handler = api_graph_get_handler};
   httpd_uri_t settings_get = {.uri = "/settings", .method = HTTP_GET, .handler = settings_get_handler};
   httpd_uri_t settings_network_post = {
@@ -875,14 +1419,26 @@ void web_server_manager_init(void) {
       .uri = "/settings/wireguard/upload", .method = HTTP_POST, .handler = settings_wireguard_upload_post_handler};
   httpd_uri_t settings_wg_delete_post = {
       .uri = "/settings/wireguard/delete", .method = HTTP_POST, .handler = settings_wireguard_delete_post_handler};
+  httpd_uri_t settings_ota_upload_post = {
+      .uri = "/settings/ota/upload", .method = HTTP_POST, .handler = settings_ota_upload_post_handler};
   httpd_uri_t settings_users_post = {
       .uri = "/settings/users", .method = HTTP_POST, .handler = settings_users_post_handler};
+  httpd_uri_t settings_snmp_post = {
+      .uri = "/settings/snmp", .method = HTTP_POST, .handler = settings_snmp_post_handler};
+  httpd_uri_t settings_notify_post = {
+      .uri = "/settings/notify", .method = HTTP_POST, .handler = settings_notify_post_handler};
+  httpd_uri_t settings_system_post = {
+      .uri = "/settings/system", .method = HTTP_POST, .handler = settings_system_post_handler};
   httpd_uri_t settings_config_download = {
       .uri = "/settings/config-download", .method = HTTP_GET, .handler = settings_config_download_handler};
   httpd_uri_t settings_reboot_post = {
       .uri = "/settings/reboot", .method = HTTP_POST, .handler = settings_reboot_post_handler};
   httpd_uri_t settings_taster_post = {
       .uri = "/settings/taster", .method = HTTP_POST, .handler = settings_taster_post_handler};
+  httpd_uri_t settings_tastschutz_post = {
+      .uri = "/settings/tastschutz", .method = HTTP_POST, .handler = settings_tastschutz_post_handler};
+  httpd_uri_t settings_led_post = {
+      .uri = "/settings/led", .method = HTTP_POST, .handler = settings_led_post_handler};
   httpd_uri_t settings_reset_post = {
       .uri = "/settings/reset", .method = HTTP_POST, .handler = settings_reset_post_handler};
   httpd_uri_t logs_get = {.uri = "/logs", .method = HTTP_GET, .handler = logs_get_handler};
@@ -897,15 +1453,23 @@ void web_server_manager_init(void) {
   httpd_register_uri_handler(s_server, &login_post);
   httpd_register_uri_handler(s_server, &logout_get);
   httpd_register_uri_handler(s_server, &root_get);
+  httpd_register_uri_handler(s_server, &account_ssh_key_post);
+  httpd_register_uri_handler(s_server, &account_notify_post);
   httpd_register_uri_handler(s_server, &api_graph_get);
   httpd_register_uri_handler(s_server, &settings_get);
   httpd_register_uri_handler(s_server, &settings_network_post);
   httpd_register_uri_handler(s_server, &settings_wg_upload_post);
+  httpd_register_uri_handler(s_server, &settings_ota_upload_post);
   httpd_register_uri_handler(s_server, &settings_wg_delete_post);
   httpd_register_uri_handler(s_server, &settings_users_post);
+  httpd_register_uri_handler(s_server, &settings_snmp_post);
+  httpd_register_uri_handler(s_server, &settings_notify_post);
+  httpd_register_uri_handler(s_server, &settings_system_post);
   httpd_register_uri_handler(s_server, &settings_config_download);
   httpd_register_uri_handler(s_server, &settings_reboot_post);
   httpd_register_uri_handler(s_server, &settings_taster_post);
+  httpd_register_uri_handler(s_server, &settings_tastschutz_post);
+  httpd_register_uri_handler(s_server, &settings_led_post);
   httpd_register_uri_handler(s_server, &settings_reset_post);
   httpd_register_uri_handler(s_server, &logs_get);
   httpd_register_uri_handler(s_server, &logs_sensors_csv);
