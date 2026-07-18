@@ -205,21 +205,36 @@ static bool dht_read(float* out_temp_c, float* out_humidity_pct) {
 // SensorTask
 // ---------------------------------------------------------------------
 
-static void check_threshold(const char* quelle, bool valid, float value, float threshold) {
-  if (valid && value > threshold) {
+// Flankengetriggert statt bei jedem SensorTask-Zyklus (60s) erneut: ohne
+// das wuerde eine anhaltende Schwellwert-Ueberschreitung alle 60s eine
+// neue Syslog-Nachricht/E-Mail ausloesen (siehe notification_manager,
+// jetzt mit echtem Versandweg statt nur einem Log-Eintrag - eine
+// Alarm-Flut waere hier ein echtes Problem, vorher war es nur eine
+// wiederholte Log-Zeile). Jede Messgroesse haelt ihren eigenen
+// "war schon gemeldet"-Zustand, wird erst wieder scharf, sobald der Wert
+// zurueck unter den Schwellwert faellt.
+static void check_threshold(const char* quelle, bool valid, float value, float threshold, bool* was_breached) {
+  if (!valid) return;
+  bool breached = value > threshold;
+  if (breached && !*was_breached) {
     notification_manager_trigger(quelle, value, threshold);
   }
+  *was_breached = breached;
 }
 
 static void sensor_manager_task(void* arg) {
   (void)arg;
+  static bool ntc_breached = false;
+  static bool dht_temp_breached = false;
+  static bool dht_humidity_breached = false;
+
   for (;;) {
     float ntc_temp_c;
     s_ntc_valid = ntc_read_temp_c(&ntc_temp_c);
     if (s_ntc_valid) {
       s_ntc_temp_c = ntc_temp_c;
       ESP_LOGI(TAG, "NTC: %.1f C", ntc_temp_c);
-      check_threshold("NTC-Temperatur", true, ntc_temp_c, config_manager_get_ntc_temp_max_c());
+      check_threshold("NTC-Temperatur", true, ntc_temp_c, config_manager_get_ntc_temp_max_c(), &ntc_breached);
     }
 
     float dht_temp_c, dht_humidity_pct;
@@ -228,9 +243,9 @@ static void sensor_manager_task(void* arg) {
       s_dht_temp_c = dht_temp_c;
       s_dht_humidity_pct = dht_humidity_pct;
       ESP_LOGI(TAG, "DHT11: %.1f C, %.1f %% RH", dht_temp_c, dht_humidity_pct);
-      check_threshold("DHT11-Temperatur", true, dht_temp_c, config_manager_get_dht_temp_max_c());
-      check_threshold("DHT11-Luftfeuchte", true, dht_humidity_pct,
-                       config_manager_get_dht_humidity_max_pct());
+      check_threshold("DHT11-Temperatur", true, dht_temp_c, config_manager_get_dht_temp_max_c(), &dht_temp_breached);
+      check_threshold("DHT11-Luftfeuchte", true, dht_humidity_pct, config_manager_get_dht_humidity_max_pct(),
+                       &dht_humidity_breached);
     }
 
     sensor_history_maybe_record(s_ntc_valid, s_ntc_temp_c, s_dht_valid, s_dht_temp_c, s_dht_humidity_pct);

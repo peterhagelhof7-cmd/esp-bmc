@@ -7,10 +7,11 @@
 // ConfigManager-Werte. SensorTask laeuft alle 60 Sekunden (Abschnitt 2.1,
 // "analog Sensormeter-Familie").
 //
-// ADC-Kanal/GPIO unten sind AUSDRUECKLICH PROVISORISCH, gleiches Muster wie
-// gpio_manager.h (docs/pflichtenheft.txt Abschnitt 12, "Exakte
-// GPIO-Pinbelegung ... noch offen"). Vor dem ersten echten Flash pruefen/
-// anpassen.
+// ADC-Kanal/GPIO final festgelegt (2026-07-18) gegen die Vendor-Pinout-
+// Bilder und die ESP-IDF-SoC-Header abgeglichen (keine Kollision mit
+// Strapping-Pins/JTAG/UART/USB) - siehe docs/verdrahtungsplan.html und
+// docs/entscheidungen.md. Noch nicht auf echter Hardware verifiziert (kein
+// Board vorhanden), aber kein reiner Wokwi-Platzhalter mehr.
 
 #define SENSOR_MANAGER_NTC_ADC_CHANNEL 0  // ADC1_CH0 = GPIO1
 #define SENSOR_MANAGER_DHT_GPIO 2         // Eingang/Ausgang, 1-Wire-artig (DHT11)
