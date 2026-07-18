@@ -18,12 +18,17 @@ static const char* TAG = "user_manager";
 #define USERNAME_CAP 32
 #define SALT_HEX_LEN 16   // 8 Byte Salt als Hex
 #define HASH_HEX_LEN 64   // SHA-256 = 32 Byte als Hex
+#define SSH_PUBKEY_B64_CAP 200  // reicht grosszuegig fuer ECDSA-P384/Ed25519 Base64-Bloecke
+#define EMAIL_CAP 64
 
 typedef struct {
   char username[USERNAME_CAP];
   char salt_hex[SALT_HEX_LEN + 1];
   char hash_hex[HASH_HEX_LEN + 1];
   user_role_t role;
+  char ssh_pubkey_b64[SSH_PUBKEY_B64_CAP];  // nur der Base64-Block, leer = kein Schluessel hinterlegt
+  char email[EMAIL_CAP];                    // leer = keine Adresse hinterlegt
+  bool notify_enabled;
   bool in_use;
 } user_entry_t;
 
@@ -79,6 +84,9 @@ static void save_users(void) {
     cJSON_AddStringToObject(obj, "salt", s_users[i].salt_hex);
     cJSON_AddStringToObject(obj, "hash", s_users[i].hash_hex);
     cJSON_AddNumberToObject(obj, "role", (int)s_users[i].role);
+    cJSON_AddStringToObject(obj, "ssh_pubkey", s_users[i].ssh_pubkey_b64);
+    cJSON_AddStringToObject(obj, "email", s_users[i].email);
+    cJSON_AddBoolToObject(obj, "notify", s_users[i].notify_enabled);
     cJSON_AddItemToArray(arr, obj);
   }
   char* text = cJSON_PrintUnformatted(arr);
@@ -121,6 +129,18 @@ static void load_users(void) {
     strncpy(u->salt_hex, salt->valuestring, SALT_HEX_LEN);
     strncpy(u->hash_hex, hash->valuestring, HASH_HEX_LEN);
     u->role = (user_role_t)role->valueint;
+    u->ssh_pubkey_b64[0] = '\0';
+    cJSON* ssh_pubkey = cJSON_GetObjectItem(obj, "ssh_pubkey");
+    if (cJSON_IsString(ssh_pubkey)) {
+      strncpy(u->ssh_pubkey_b64, ssh_pubkey->valuestring, sizeof(u->ssh_pubkey_b64) - 1);
+    }
+    u->email[0] = '\0';
+    cJSON* email = cJSON_GetObjectItem(obj, "email");
+    if (cJSON_IsString(email)) {
+      strncpy(u->email, email->valuestring, sizeof(u->email) - 1);
+    }
+    cJSON* notify = cJSON_GetObjectItem(obj, "notify");
+    u->notify_enabled = cJSON_IsTrue(notify);
     u->in_use = true;
   }
   cJSON_Delete(arr);
@@ -290,6 +310,146 @@ void user_manager_session_invalidate(const char* token) {
       return;
     }
   }
+}
+
+// ---------------------------------------------------------------------
+// SSH-Public-Key (P7) - Base64-Dekodierung ist alles, was hier
+// zusaetzlich gebraucht wird: der Vergleich gegen den vom SSH-Client
+// waehrend der Anmeldung praesentierten Wire-Format-Blob passiert
+// byteweise, kein Bedarf, den Blob selbst zu interpretieren.
+// ---------------------------------------------------------------------
+
+static int b64_val(char c) {
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == '+') return 62;
+  if (c == '/') return 63;
+  return -1;
+}
+
+static size_t base64_decode(const char* in, uint8_t* out, size_t out_cap) {
+  size_t out_len = 0;
+  int val = 0, bits = -8;
+  for (const char* p = in; *p && *p != '='; p++) {
+    int v = b64_val(*p);
+    if (v < 0) break;
+    val = (val << 6) + v;
+    bits += 6;
+    if (bits >= 0) {
+      if (out_len >= out_cap) break;
+      out[out_len++] = (uint8_t)((val >> bits) & 0xFF);
+      bits -= 8;
+    }
+  }
+  return out_len;
+}
+
+bool user_manager_set_ssh_public_key(const char* username, const char* openssh_line) {
+  user_entry_t* u = find_user(username);
+  if (!u) return false;
+
+  // Format "<typ> <base64> [kommentar]" - nur der mittlere Block wird
+  // gespeichert (der Typ steckt ohnehin redundant im Blob selbst,
+  // Kommentar ist fuer die Pruefung irrelevant).
+  const char* p = openssh_line;
+  while (*p == ' ' || *p == '\t') p++;
+  while (*p && *p != ' ' && *p != '\t') p++;  // Typ-Feld ueberspringen
+  while (*p == ' ' || *p == '\t') p++;
+  const char* b64_start = p;
+  while (*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') p++;
+  size_t b64_len = (size_t)(p - b64_start);
+  if (b64_len == 0 || b64_len >= sizeof(u->ssh_pubkey_b64)) return false;
+
+  memcpy(u->ssh_pubkey_b64, b64_start, b64_len);
+  u->ssh_pubkey_b64[b64_len] = '\0';
+  save_users();
+  return true;
+}
+
+bool user_manager_get_ssh_public_key(const char* username, char* out, size_t out_len) {
+  user_entry_t* u = find_user(username);
+  if (!u) {
+    out[0] = '\0';
+    return false;
+  }
+  strncpy(out, u->ssh_pubkey_b64, out_len - 1);
+  out[out_len - 1] = '\0';
+  return u->ssh_pubkey_b64[0] != '\0';
+}
+
+bool user_manager_verify_ssh_public_key(const char* username, const uint8_t* key_blob, size_t key_blob_len,
+                                         user_role_t* out_role) {
+  user_entry_t* u = find_user(username);
+  if (!u || u->ssh_pubkey_b64[0] == '\0') return false;
+
+  uint8_t stored[300];
+  size_t stored_len = base64_decode(u->ssh_pubkey_b64, stored, sizeof(stored));
+  if (stored_len == 0 || stored_len != key_blob_len) return false;
+  if (memcmp(stored, key_blob, stored_len) != 0) return false;
+
+  *out_role = u->role;
+  return true;
+}
+
+// ---------------------------------------------------------------------
+// E-Mail-Benachrichtigung - siehe user_manager.h. Nur eine minimale
+// Plausibilitaetspruefung ("@" gefolgt von mindestens einem Zeichen),
+// keine volle RFC-5322-Validierung - unverhaeltnismaessiger Aufwand fuer
+// den Zweck hier (Tippfehler-Schutz, kein Sicherheitsmerkmal).
+// ---------------------------------------------------------------------
+
+static bool looks_like_email(const char* email) {
+  const char* at = strchr(email, '@');
+  return at != NULL && at != email && *(at + 1) != '\0';
+}
+
+bool user_manager_set_notification_email(const char* username, const char* email, bool enabled) {
+  user_entry_t* u = find_user(username);
+  if (!u) return false;
+  if (enabled && !looks_like_email(email)) return false;
+  if (strlen(email) >= sizeof(u->email)) return false;
+
+  strncpy(u->email, email, sizeof(u->email) - 1);
+  u->email[sizeof(u->email) - 1] = '\0';
+  u->notify_enabled = enabled;
+  save_users();
+  return true;
+}
+
+bool user_manager_get_notification_email(const char* username, char* out_email, size_t out_len, bool* out_enabled) {
+  user_entry_t* u = find_user(username);
+  if (!u) {
+    out_email[0] = '\0';
+    *out_enabled = false;
+    return false;
+  }
+  strncpy(out_email, u->email, out_len - 1);
+  out_email[out_len - 1] = '\0';
+  *out_enabled = u->notify_enabled;
+  return true;
+}
+
+size_t user_manager_count_notify_recipients(void) {
+  size_t count = 0;
+  for (size_t i = 0; i < MAX_USERS; i++) {
+    if (s_users[i].in_use && s_users[i].notify_enabled && s_users[i].email[0] != '\0') count++;
+  }
+  return count;
+}
+
+bool user_manager_get_notify_recipient_at(size_t index, char* out_email, size_t out_len) {
+  size_t seen = 0;
+  for (size_t i = 0; i < MAX_USERS; i++) {
+    if (!s_users[i].in_use || !s_users[i].notify_enabled || s_users[i].email[0] == '\0') continue;
+    if (seen == index) {
+      strncpy(out_email, s_users[i].email, out_len - 1);
+      out_email[out_len - 1] = '\0';
+      return true;
+    }
+    seen++;
+  }
+  return false;
 }
 
 void user_manager_reset_to_default(void) {

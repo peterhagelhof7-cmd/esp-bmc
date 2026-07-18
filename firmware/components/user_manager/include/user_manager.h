@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 // UserManager (webconfig.txt "Geschuetzte Seite" / Benutzerverwaltung) -
 // rollenbasierte Benutzerkonten + Web-Session-Verwaltung. Persistiert auf
@@ -69,3 +70,44 @@ void user_manager_session_invalidate(const char* token);
 // "reset (nur einstellungen)") - identisch zum Erststart-Verhalten in
 // user_manager_init().
 void user_manager_reset_to_default(void);
+
+// --- SSH-Public-Key (P7, webconfig.txt: "Admin"/"SSH User" = "... +
+// hinterlegen eines SSH key") ---
+//
+// Ein Schluessel pro Konto, im ueblichen OpenSSH-"authorized_keys"-
+// Zeilenformat gespeichert ("ecdsa-sha2-nistp256 AAAA...[Kommentar]") -
+// nur der Base64-Block wird fuer den eigentlichen Vergleich gebraucht
+// (der Typ-String steckt ohnehin redundant im Wire-Format-Blob selbst
+// drin). Nur ECDSA/Ed25519-Client-Schluessel funktionieren - RSA ist
+// projektweit deaktiviert (firmware/CMakeLists.txt NO_RSA, siehe
+// docs/entscheidungen.md "SSH-Server (P7)"), ein RSA-Schluessel wuerde
+// nie passen.
+bool user_manager_set_ssh_public_key(const char* username, const char* openssh_line);
+bool user_manager_get_ssh_public_key(const char* username, char* out, size_t out_len);
+
+// Prueft einen SSH-Wire-Format-Public-Key-Blob (roh, wie ihn der
+// SSH-Client waehrend der Anmeldung praesentiert - NICHT Base64) gegen
+// den fuer diesen Benutzer hinterlegten Schluessel. Bei Erfolg wird
+// *out_role gesetzt.
+bool user_manager_verify_ssh_public_key(const char* username, const uint8_t* key_blob, size_t key_blob_len,
+                                         user_role_t* out_role);
+
+// --- E-Mail-Benachrichtigung (Pflichtenheft Abschnitt 3.8, Versandweg) ---
+//
+// Jeder Nutzer verwaltet seine eigene Adresse + Aktiv-Schalter selbst
+// (Selbstbedienung wie beim SSH-Key oben, aber ohne Rollenbeschraenkung -
+// Benachrichtigungen sind fuer jede Rolle sinnvoll). Ist "enabled" true,
+// muss "email" eine minimal plausible Adresse sein (enthaelt "@" und
+// danach noch mind. ein Zeichen), sonst schlaegt der Aufruf fehl - eine
+// aktivierte Benachrichtigung ohne Adresse ergibt keinen Sinn. Ist
+// "enabled" false, wird die Adresse trotzdem gespeichert (Nutzer kann sie
+// vorbereiten, ohne gleich Mails zu bekommen).
+bool user_manager_set_notification_email(const char* username, const char* email, bool enabled);
+bool user_manager_get_notification_email(const char* username, char* out_email, size_t out_len, bool* out_enabled);
+
+// Iteration NUR ueber Konten mit aktivierter Benachrichtigung UND
+// hinterlegter Adresse - fuer den Versand-Fan-Out in notification_manager.
+// Anders als user_manager_get_at() (das ueber ALLE Konten iteriert) laeuft
+// der Index hier nur ueber die passenden Konten.
+size_t user_manager_count_notify_recipients(void);
+bool user_manager_get_notify_recipient_at(size_t index, char* out_email, size_t out_len);
