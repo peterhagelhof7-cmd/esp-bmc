@@ -12,10 +12,15 @@
 //      (ueber den Optokoppler an den Mainboard-Header) auf LOW und leitet
 //      den Tastendruck damit weiter
 //
-// GPIO-Nummern unten sind AUSDRUECKLICH PROVISORISCH, nur fuer die
-// Wokwi-Simulation ohne echtes Board (siehe docs/pflichtenheft.txt
-// Abschnitt 12, "Exakte GPIO-Pinbelegung ... noch offen"). Vor dem ersten
-// echten Flash auf das reale diymore-Board pruefen/anpassen.
+// GPIO-Nummern final festgelegt (2026-07-18) gegen die Vendor-Pinout-
+// Bilder ("board mit bezeichner.bmp", "board.jpg", "docs/board-foto.jpg")
+// und die ESP-IDF-SoC-Header abgeglichen (keine Kollision mit
+// Strapping-Pins GPIO0/3/45/46, JTAG GPIO39-42, UART GPIO43/44 oder
+// nativem USB GPIO19/20) - siehe docs/verdrahtungsplan.html fuer die
+// vollstaendige Pinbelegung inkl. Beschaltung (Optokoppler-Varianten,
+// Spannungsteiler fuer die LED-Erfassung) und docs/entscheidungen.md.
+// Noch nicht auf echter Hardware verifiziert (kein Board vorhanden), aber
+// kein reiner Wokwi-Platzhalter mehr.
 
 #define GPIO_REMOTE_POWER_SENSE   4   // Eingang, Pull-up (Lastenheft 10.2)
 #define GPIO_REMOTE_RESET_SENSE   5   // Eingang, Pull-up (Lastenheft 10.2)
@@ -52,9 +57,17 @@ bool gpio_manager_read_hdd_led(void);
 // Seitenaufrufen liegende Blink-Impulse ein.
 bool gpio_manager_hdd_led_active_recently(void);
 
-// LED-Ansteuerung (Lastenheft 10.1).
+// LED-Ansteuerung (Lastenheft Abschnitt 5 "Gehaeuse-Power-/HDD-LED
+// ansteuern", elektrisch siehe 10.1).
 void gpio_manager_set_power_led(bool on);
 void gpio_manager_set_hdd_led(bool on);
+
+// Zuletzt per gpio_manager_set_*_led() gesetzter Zustand (Software-
+// Schattenkopie, siehe Kommentar bei TasterKanal.weitergeleitet in der
+// .c-Datei - kein zuverlaessiges GPIO-Readback auf einem OUTPUT-Pin).
+// Fuer die Web-/USB-Anzeige des aktuellen Soll-Zustands.
+bool gpio_manager_power_led_out_state(void);
+bool gpio_manager_hdd_led_out_state(void);
 
 // --- Taster-Steuerung per Software (webconfig.txt "steuerung der taster
 // (power und reset)", was-loggen.txt "user set power host (push or hold)" /

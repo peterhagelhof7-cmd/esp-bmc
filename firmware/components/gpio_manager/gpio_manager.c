@@ -54,6 +54,13 @@ static TasterKanal s_reset = {
 // direkt nach dem Boot korrekt false liefert, bevor je ein Signal anlag.
 static int64_t s_hdd_led_last_active_us = -HDD_LED_RECENT_WINDOW_US * 2;
 
+// Software-Schattenkopie der Gehaeuse-LED-Ausgaenge (Lastenheft
+// Abschnitt 5 "Gehaeuse-Power-/HDD-LED ansteuern") - aus demselben Grund
+// wie bei TasterKanal.weitergeleitet oben: gpio_get_level() auf einem
+// OUTPUT-Pin ist kein zuverlaessiges Readback.
+static bool s_power_led_out_state;
+static bool s_hdd_led_out_state;
+
 static void configure_input_pullup(int gpio_num) {
   gpio_config_t cfg = {
       .pin_bit_mask = 1ULL << gpio_num,
@@ -174,8 +181,17 @@ bool gpio_manager_reset_taste_weitergeleitet(void) { return s_reset.weitergeleit
 bool gpio_manager_read_power_led(void) { return gpio_get_level(GPIO_REMOTE_POWER_LED_IN) == 0; }
 bool gpio_manager_read_hdd_led(void) { return gpio_get_level(GPIO_REMOTE_HDD_LED_IN) == 0; }
 
-void gpio_manager_set_power_led(bool on) { gpio_set_level(GPIO_REMOTE_POWER_LED_OUT, on ? 1 : 0); }
-void gpio_manager_set_hdd_led(bool on) { gpio_set_level(GPIO_REMOTE_HDD_LED_OUT, on ? 1 : 0); }
+void gpio_manager_set_power_led(bool on) {
+  gpio_set_level(GPIO_REMOTE_POWER_LED_OUT, on ? 1 : 0);
+  s_power_led_out_state = on;
+}
+void gpio_manager_set_hdd_led(bool on) {
+  gpio_set_level(GPIO_REMOTE_HDD_LED_OUT, on ? 1 : 0);
+  s_hdd_led_out_state = on;
+}
+
+bool gpio_manager_power_led_out_state(void) { return s_power_led_out_state; }
+bool gpio_manager_hdd_led_out_state(void) { return s_hdd_led_out_state; }
 
 bool gpio_manager_trigger_power(bool hold) {
   return trigger_kanal(&s_power, hold ? REMOTE_PRESS_HOLD_MS : REMOTE_PRESS_PUSH_MS);
