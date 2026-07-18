@@ -1,0 +1,3 @@
+dependencies:
+  wolfssl/wolfssl: "^5.8.2"
+  wolfssl/wolfssh: "^1.4.20"

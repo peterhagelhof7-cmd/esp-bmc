@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 
 // Minimaler Platzstand fuer P0/P2 (siehe docs/implementierungsplan.html).
 // Haelt aktuell nur den Tastschutz-Zustand rein im RAM - Persistenz
@@ -35,3 +36,15 @@ void config_manager_set_dht_humidity_max_pct(float value);
 // zurueck (webconfig.txt "Seite Einstellungen": "reset (nur einstellungen,
 // oder einstellungen und werte)" - dies ist der "Einstellungen"-Teil).
 void config_manager_reset_to_defaults(void);
+
+// --- Geraetename (frei vergebbar, z.B. "Buero-PC") vs. Geraetetyp (fest
+// "ESP-BMC", identisch fuer jedes mit dieser Firmware laufende Geraet) -
+// siehe was-loggen.txt "system name"/"system type" und der SNMP-Agent
+// (sysName/sysType), docs/entscheidungen.md "SNMP-Agent: Systemname".
+// Einziges Feld in diesem Modul mit echter Persistenz (auf
+// /storage/device.json) - Tastschutz/Schwellwerte bleiben bewusst
+// RAM-only bis zur eigenen Config-Phase (siehe Kopfkommentar).
+void config_manager_init(void);
+void config_manager_get_device_name(char* out, size_t out_len);
+bool config_manager_set_device_name(const char* name);
+const char* config_manager_get_device_type(void);

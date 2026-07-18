@@ -14,6 +14,7 @@
 #include "network_manager.h"
 #include "sensor_history.h"
 #include "sensor_manager.h"
+#include "snmp_manager.h"
 #include "storage_manager.h"
 #include "tinyusb.h"
 #include "tusb_cdc_acm.h"
@@ -263,15 +264,26 @@ static void cmd_config_download(void) {
   network_manager_get_ip_string(ip, sizeof(ip));
   char wg_ip[16] = "-";
   wireguard_manager_get_local_address(wg_ip, sizeof(wg_ip));
+  char device_name[32];
+  config_manager_get_device_name(device_name, sizeof(device_name));
+  char snmp_ro[32], snmp_rw[32];
+  snmp_manager_get_community(snmp_ro, sizeof(snmp_ro));
+  snmp_manager_get_rw_community(snmp_rw, sizeof(snmp_rw));
 
   reply_ok(NULL);
-  char body[1024];
-  size_t off = snprintf(body, sizeof(body),
-                         "{\"wlan_ip\":\"%s\",\"wlan_static\":%s,\"wireguard_configured\":%s,"
-                         "\"wireguard_local_ip\":\"%s\",\"wireguard_connected\":%s,\"users\":[",
-                         ip, network_manager_is_static_ip() ? "true" : "false",
-                         wireguard_manager_has_uploaded_config() ? "true" : "false", wg_ip,
-                         wireguard_manager_is_up() ? "true" : "false");
+  char body[1200];
+  size_t off = snprintf(
+      body, sizeof(body),
+      "{\"system_name\":\"%s\",\"system_type\":\"%s\",\"tastschutz\":%s,"
+      "\"ntc_temp_max_c\":%.1f,\"dht_temp_max_c\":%.1f,\"dht_humidity_max_pct\":%.1f,"
+      "\"snmp_community\":\"%s\",\"snmp_rw_community\":\"%s\","
+      "\"wlan_ip\":\"%s\",\"wlan_static\":%s,\"wireguard_configured\":%s,"
+      "\"wireguard_local_ip\":\"%s\",\"wireguard_connected\":%s,\"users\":[",
+      device_name, config_manager_get_device_type(), config_manager_is_tastschutz_active() ? "true" : "false",
+      config_manager_get_ntc_temp_max_c(), config_manager_get_dht_temp_max_c(),
+      config_manager_get_dht_humidity_max_pct(), snmp_ro, snmp_rw, ip,
+      network_manager_is_static_ip() ? "true" : "false", wireguard_manager_has_uploaded_config() ? "true" : "false",
+      wg_ip, wireguard_manager_is_up() ? "true" : "false");
   for (size_t i = 0; i < user_manager_count() && off < sizeof(body) - 64; i++) {
     char uname[32];
     user_role_t urole;
@@ -446,6 +458,95 @@ static void cmd_taster(char* args) {
   reply_end();
 }
 
+// --- Geraete-/SNMP-/Schwellwert-Konfiguration per USB (inital-setup.txt:
+//     Setup-Skript wendet eine bearbeitete Config-Vorlage an, bevor
+//     ueberhaupt ein Netzwerk existiert) ---
+
+static void cmd_system_set(char* args) {
+  if (!require_role(USER_ROLE_VERWALTER)) return;
+  char* name = strtok(args, " ");
+  if (!name || !config_manager_set_device_name(name)) {
+    reply_err("Syntax: system set <name> (1-31 Zeichen)");
+    reply_end();
+    return;
+  }
+  audit_log_add("Systemname geaendert (USB)");
+  reply_ok(NULL);
+  reply_end();
+}
+
+static void cmd_snmp_set(char* args) {
+  if (!require_role(USER_ROLE_VERWALTER)) return;
+  char* ro = strtok(args, " ");
+  char* rw = ro ? strtok(NULL, " ") : NULL;
+  if (!ro || !rw || !snmp_manager_set_community(ro) || !snmp_manager_set_rw_community(rw)) {
+    reply_err("Syntax: snmp set <lese-community> <schreib-community>");
+    reply_end();
+    return;
+  }
+  audit_log_add("SNMP-Communities geaendert (USB)");
+  reply_ok(NULL);
+  reply_end();
+}
+
+static void cmd_thresholds_set(char* args) {
+  if (!require_role(USER_ROLE_VERWALTER)) return;
+  char* ntc = strtok(args, " ");
+  char* dht = ntc ? strtok(NULL, " ") : NULL;
+  char* hum = dht ? strtok(NULL, " ") : NULL;
+  if (!ntc || !dht || !hum) {
+    reply_err("Syntax: thresholds set <ntc_max_c> <dht_max_c> <dht_max_pct>");
+    reply_end();
+    return;
+  }
+  config_manager_set_ntc_temp_max_c((float)atof(ntc));
+  config_manager_set_dht_temp_max_c((float)atof(dht));
+  config_manager_set_dht_humidity_max_pct((float)atof(hum));
+  audit_log_add("Schwellwerte geaendert (USB)");
+  reply_ok(NULL);
+  reply_end();
+}
+
+static void cmd_tastschutz_set(char* args) {
+  if (!require_role(USER_ROLE_VERWALTER)) return;
+  char* val = strtok(args, " ");
+  if (!val || (strcmp(val, "0") != 0 && strcmp(val, "1") != 0)) {
+    reply_err("Syntax: tastschutz set 0|1");
+    reply_end();
+    return;
+  }
+  config_manager_set_tastschutz(strcmp(val, "1") == 0);
+  audit_log_add("Tastschutz geaendert (USB)");
+  reply_ok(NULL);
+  reply_end();
+}
+
+// Gehaeuse-LED-Ansteuerung (Lastenheft Abschnitt 5, siehe auch die
+// gleichnamigen Web-Handler in web_server_manager.c - dieselbe
+// gpio_manager-Funktion, keine doppelte Logik).
+static void cmd_led_set(char* args) {
+  if (!require_role(USER_ROLE_VERWALTER)) return;
+  char* which = strtok(args, " ");
+  char* val = which ? strtok(NULL, " ") : NULL;
+  if (!which || !val || (strcmp(val, "0") != 0 && strcmp(val, "1") != 0) ||
+      (strcmp(which, "power") != 0 && strcmp(which, "hdd") != 0)) {
+    reply_err("Syntax: led set power|hdd 0|1");
+    reply_end();
+    return;
+  }
+  bool on = strcmp(val, "1") == 0;
+  if (strcmp(which, "power") == 0) {
+    gpio_manager_set_power_led(on);
+  } else {
+    gpio_manager_set_hdd_led(on);
+  }
+  char event[96];
+  snprintf(event, sizeof(event), "Gehaeuse-LED \"%s\" gesetzt auf %d (USB)", which, on);
+  audit_log_add(event);
+  reply_ok(NULL);
+  reply_end();
+}
+
 // --- Diagnose (bestehendes "storage"-Kommando, jetzt unter dem
 //     einheitlichen Praefix statt als bare Wort) ---
 
@@ -507,6 +608,51 @@ static void dispatch_command(char* line) {
     cmd_taster(rest_buf);
   } else if (strcmp(cmd, "reset") == 0) {
     cmd_reset(rest_buf);
+  } else if (strcmp(cmd, "system") == 0) {
+    char* sub = strtok(rest_buf, " ");
+    char* sub_rest = sub ? strtok(NULL, "") : NULL;
+    if (sub && strcmp(sub, "set") == 0) {
+      cmd_system_set(sub_rest ? sub_rest : "");
+    } else {
+      reply_err("Syntax: system set <name>");
+      reply_end();
+    }
+  } else if (strcmp(cmd, "snmp") == 0) {
+    char* sub = strtok(rest_buf, " ");
+    char* sub_rest = sub ? strtok(NULL, "") : NULL;
+    if (sub && strcmp(sub, "set") == 0) {
+      cmd_snmp_set(sub_rest ? sub_rest : "");
+    } else {
+      reply_err("Syntax: snmp set <ro> <rw>");
+      reply_end();
+    }
+  } else if (strcmp(cmd, "thresholds") == 0) {
+    char* sub = strtok(rest_buf, " ");
+    char* sub_rest = sub ? strtok(NULL, "") : NULL;
+    if (sub && strcmp(sub, "set") == 0) {
+      cmd_thresholds_set(sub_rest ? sub_rest : "");
+    } else {
+      reply_err("Syntax: thresholds set <ntc> <dht> <hum>");
+      reply_end();
+    }
+  } else if (strcmp(cmd, "tastschutz") == 0) {
+    char* sub = strtok(rest_buf, " ");
+    char* sub_rest = sub ? strtok(NULL, "") : NULL;
+    if (sub && strcmp(sub, "set") == 0) {
+      cmd_tastschutz_set(sub_rest ? sub_rest : "");
+    } else {
+      reply_err("Syntax: tastschutz set 0|1");
+      reply_end();
+    }
+  } else if (strcmp(cmd, "led") == 0) {
+    char* sub = strtok(rest_buf, " ");
+    char* sub_rest = sub ? strtok(NULL, "") : NULL;
+    if (sub && strcmp(sub, "set") == 0) {
+      cmd_led_set(sub_rest ? sub_rest : "");
+    } else {
+      reply_err("Syntax: led set power|hdd 0|1");
+      reply_end();
+    }
   } else if (strcmp(cmd, "wg") == 0) {
     char* sub = strtok(rest_buf, " ");
     char* sub_rest = sub ? strtok(NULL, "") : NULL;
@@ -639,6 +785,16 @@ void usb_manager_cdc_write(const uint8_t* data, size_t len) {
 }
 
 QueueHandle_t usb_manager_get_cdc_rx_queue(void) { return s_cdc_rx_queue; }
+
+static volatile console_owner_t s_console_owner = CONSOLE_OWNER_NONE;
+
+void usb_manager_console_claim(console_owner_t owner) { s_console_owner = owner; }
+
+void usb_manager_console_release(console_owner_t owner) {
+  if (s_console_owner == owner) s_console_owner = CONSOLE_OWNER_NONE;
+}
+
+console_owner_t usb_manager_console_owner(void) { return s_console_owner; }
 
 void usb_manager_send_key(uint8_t modifier, uint8_t keycode) {
   if (!tud_hid_n_ready(0)) return;
