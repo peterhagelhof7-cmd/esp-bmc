@@ -650,7 +650,7 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
   // (siehe settings_ota_upload_post_handler) unnoetig verkompliziert -
   // "Downgrade erzwingen" kommt stattdessen als Query-Parameter auf der
   // Formular-Action, dafuer reicht ein zweites Formular.
-  char ota_card[1280] = "";
+  char ota_card[1536] = "";
   if (role >= USER_ROLE_ADMIN) {
     snprintf(ota_card, sizeof(ota_card),
              "<div class=\"card\"><h2>Firmware-Update (OTA)</h2>"
@@ -658,6 +658,8 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
              "gueltiges ESP-BMC-Erkennungsmerkmal enthalten (verhindert Cross-Flashen eines anderen "
              "Projekts) und darf keine aeltere Version sein - ausser ueber das zweite Formular "
              "bewusst freigegeben.</p>"
+             "<p>Quellcode &amp; Firmware-Releases: <a href=\"https://github.com/peterhagelhof7-cmd/esp-bmc\" "
+             "target=\"_blank\" rel=\"noopener noreferrer\">github.com/peterhagelhof7-cmd/esp-bmc</a></p>"
              "<form method=\"post\" action=\"/settings/ota/upload\" enctype=\"multipart/form-data\" "
              "onsubmit=\"return confirm('Firmware wirklich aktualisieren? Das Geraet startet danach "
              "neu.');\">"
@@ -1668,7 +1670,7 @@ void web_server_manager_init(void) {
   // ESP-IDFs Default-Stackgroesse fuer den httpd-Worker-Task ist 4096 Byte
   // (siehe HTTPD_DEFAULT_CONFIG() in esp_http_server.h) - settings_get_handler()
   // allein summiert allein bei seinen groesseren lokalen Puffern
-  // (page[12288]+ota_card[1280]+scan_html[1024]+users_html[2560]+
+  // (page[16384]+ota_card[1536]+scan_html[2048]+users_html[2560]+
   // taster_pw_html[160]+diverse kleinere) auf ueber 17 KB Stack-Bedarf in
   // EINEM Funktionsaufruf - garantierter Stack-Overflow beim ersten Aufruf
   // von /settings mit dem Default. Gefunden bei einer Ueberpruefung, welche
