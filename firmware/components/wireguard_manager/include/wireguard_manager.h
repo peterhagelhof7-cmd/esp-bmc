@@ -41,6 +41,15 @@ esp_err_t wireguard_manager_delete_config(void);
 // vorliegt.
 bool wireguard_manager_has_uploaded_config(void);
 
+// Prueft NUR, ob eine hochgeladene Konfigurationsdatei auf der
+// storage-Partition existiert - im Unterschied zu
+// wireguard_manager_has_uploaded_config() OHNE wireguard_manager_init()
+// vorher aufzurufen (das legt s_has_uploaded_config erst fest). Fuer
+// main.c's Gate um wireguard_manager_init() herum gedacht - siehe dortiger
+// Kommentar zum reproduzierbaren Boot-Absturz (docs/entscheidungen.md,
+// 2026-07-23).
+bool wireguard_manager_config_available(void);
+
 // Aktuelle Werte fuer Anzeige (Uebersichtsseite) - gueltig nach
 // wireguard_manager_init(), unabhaengig davon ob Kconfig-Platzhalter oder
 // hochgeladene Konfiguration.

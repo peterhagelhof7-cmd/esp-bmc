@@ -21,6 +21,7 @@ static const char* TAG = "time_manager";
 
 static SemaphoreHandle_t s_link_up_sem;
 static volatile bool s_synced;
+static volatile time_t s_last_sync_epoch;
 static time_manager_sync_result_cb_t s_result_cb;
 
 static void on_time_sync(struct timeval* tv) {
@@ -28,6 +29,7 @@ static void on_time_sync(struct timeval* tv) {
   s_synced = true;
 
   time_t now = time(NULL);
+  s_last_sync_epoch = now;
   char buf[32];
   ctime_r(&now, buf);
   buf[strcspn(buf, "\n")] = '\0';  // ctime_r haengt selbst ein '\n' an
@@ -73,5 +75,7 @@ void time_manager_init(void) {
 void time_manager_notify_link_up(void) { xSemaphoreGive(s_link_up_sem); }
 
 bool time_manager_is_synced(void) { return s_synced; }
+
+time_t time_manager_get_last_sync(void) { return s_last_sync_epoch; }
 
 void time_manager_set_sync_result_cb(time_manager_sync_result_cb_t cb) { s_result_cb = cb; }

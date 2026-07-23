@@ -58,6 +58,8 @@ static void bytes_to_hex(const uint8_t* bytes, size_t len, char* out_hex) {
   out_hex[len * 2] = '\0';
 }
 
+static bool create_user_internal(const char* username, const char* password, user_role_t role);
+
 static void compute_password_hash(const char* salt_hex, const char* password, char out_hash_hex[HASH_HEX_LEN + 1]) {
   char salted[SALT_HEX_LEN + 128];
   snprintf(salted, sizeof(salted), "%s%s", salt_hex, password);
@@ -150,7 +152,20 @@ static void create_default_admin(void) {
   ESP_LOGW(TAG,
            "Keine Benutzer gefunden - lege Default-Konto \"admin\"/\"admin\" (Rolle Admin) an. "
            "Passwort beim ersten Login unbedingt aendern!");
-  user_manager_create("admin", "admin", USER_ROLE_ADMIN);
+  // ACHTUNG (2026-07-23, Fund beim Fallback-AP-Login-Test): "admin"/"admin"
+  // erfuellt die eigene Passwort-Policy (>=8 Zeichen, >=2 Zeichenklassen,
+  // siehe user_manager_validate_password()) nicht - ein Aufruf ueber die
+  // oeffentliche user_manager_create() wuerde hier also still fehlschlagen
+  // (Rueckgabewert wurde bislang nicht geprueft), das Default-Konto existierte
+  // dann in Wahrheit gar nicht, obwohl die Log-Zeile oben Erfolg suggeriert -
+  // jeder Login-Versuch mit admin/admin schlug deshalb fehl. Deshalb hier
+  // bewusst ueber create_user_internal() OHNE Policy-Pruefung: der Wert ist
+  // ein bekannter, absichtlich schwacher Bootstrap-Wert (siehe Log-Warnung
+  // "unbedingt aendern"), keine vom Nutzer frei gewaehlte Passwortaenderung -
+  // fuer die gilt die Policy weiterhin unveraendert ueber user_manager_create().
+  if (!create_user_internal("admin", "admin", USER_ROLE_ADMIN)) {
+    ESP_LOGE(TAG, "Default-Konto \"admin\" konnte nicht angelegt werden");
+  }
 }
 
 void user_manager_init(void) {
@@ -203,9 +218,12 @@ bool user_manager_validate_password(const char* password) {
   return classes >= 2;
 }
 
-bool user_manager_create(const char* username, const char* password, user_role_t role) {
+// Legt einen Benutzer OHNE Passwort-Policy-Pruefung an - nur fuer den
+// Default-Admin-Bootstrap gedacht (create_default_admin()), siehe dortiger
+// Kommentar. Alle regulaeren Aufrufer (Web-UI, USB-Ersteinrichtung) muessen
+// weiterhin ueber user_manager_create() gehen, das die Policy durchsetzt.
+static bool create_user_internal(const char* username, const char* password, user_role_t role) {
   if (!user_manager_validate_username(username)) return false;
-  if (!user_manager_validate_password(password)) return false;
   if (find_user(username)) return false;
 
   size_t slot = MAX_USERS;
@@ -230,6 +248,11 @@ bool user_manager_create(const char* username, const char* password, user_role_t
 
   save_users();
   return true;
+}
+
+bool user_manager_create(const char* username, const char* password, user_role_t role) {
+  if (!user_manager_validate_password(password)) return false;
+  return create_user_internal(username, password, role);
 }
 
 bool user_manager_delete(const char* username) {

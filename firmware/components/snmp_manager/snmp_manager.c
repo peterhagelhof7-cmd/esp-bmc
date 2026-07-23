@@ -660,7 +660,16 @@ static void load_communities(void) {
 
 void snmp_manager_init(void) {
   load_communities();
-  xTaskCreate(snmp_task, "snmp_manager", 4096, NULL, 4, NULL);
+  // ACHTUNG (2026-07-23, SNMP-Test): 4096 Byte reichten fuer reine
+  // GET-Anfragen, aber ein echtes SET (set_power_key(), ueber
+  // gpio_manager_trigger_power() + audit_log_add() + die
+  // BER-Response-Kodierung obendrauf) hat auf echter Hardware
+  // reproduzierbar einen Stack-Overflow ausgeloest ("A stack overflow in
+  // task snmp_manager has been detected", siehe docs/entscheidungen.md).
+  // Grosszuegig auf 8192 angehoben - gleiche Groessenordnung wie
+  // ssh_manager's dedizierter Task, aus demselben Grund (mehrschichtige
+  // Aufrufe mit lokalen Formatpuffern).
+  xTaskCreate(snmp_task, "snmp_manager", 8192, NULL, 4, NULL);
 }
 
 void snmp_manager_get_community(char* out, size_t out_len) {

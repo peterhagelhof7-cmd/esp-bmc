@@ -1,3 +1,7 @@
 # Wokwi-CLI-Token liegt hier im Klartext (siehe docs/entscheidungen.md) -
 # darf nicht ins Repo, insbesondere falls dieses spaeter oeffentlich wird.
 wokwiki.txt
+
+# Echte WireGuard-Konfigurationen enthalten private Schluessel - niemals committen.
+*.conf
+WG-SPS-CLOUD.conf

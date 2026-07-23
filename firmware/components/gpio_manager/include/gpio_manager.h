@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 // GpioManager - Taster-Erfassung, Taster-Weiterleitung (ueber Optokoppler),
 // LED-Erfassung, LED-Ansteuerung. Setzt den Ablauf aus
@@ -21,6 +22,11 @@
 // Spannungsteiler fuer die LED-Erfassung) und docs/entscheidungen.md.
 // Noch nicht auf echter Hardware verifiziert (kein Board vorhanden), aber
 // kein reiner Wokwi-Platzhalter mehr.
+//
+// Alle acht Pins liegen auf der linken Pinleiste (siehe
+// docs/verdrahtungsplan.html) - seit 2026-07-20 gilt das auch fuer
+// sensor_manager.h (NTC/DHT dorthin verschoben), damit eine
+// Huckepack-Platine mit nur einer Stiftleiste auskommt.
 
 #define GPIO_REMOTE_POWER_SENSE   4   // Eingang, Pull-up (Lastenheft 10.2)
 #define GPIO_REMOTE_RESET_SENSE   5   // Eingang, Pull-up (Lastenheft 10.2)
@@ -56,6 +62,13 @@ bool gpio_manager_read_hdd_led(void);
 // aktuelle Momentan-Pegel) faengt das auch kurze, zwischen zwei
 // Seitenaufrufen liegende Blink-Impulse ein.
 bool gpio_manager_hdd_led_active_recently(void);
+
+// Host-Uptime, abgeleitet aus der Power-LED-Erfassung: laeuft, seit die
+// Power-LED zuletzt von "aus" auf "an" gewechselt ist (nicht die
+// ESP-eigene Boot-Uptime!). Liefert false, solange die LED aktuell nicht
+// als aktiv erkannt wird (Web-UI zeigt dann "Host AUS oder nicht erkannt"
+// statt einer Laufzeit) - true + Sekunden seit diesem Wechsel, sonst.
+bool gpio_manager_host_uptime_seconds(int64_t* out_seconds);
 
 // LED-Ansteuerung (Lastenheft Abschnitt 5 "Gehaeuse-Power-/HDD-LED
 // ansteuern", elektrisch siehe 10.1).

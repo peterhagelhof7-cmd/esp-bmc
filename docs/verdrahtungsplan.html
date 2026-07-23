@@ -207,6 +207,19 @@
   </p>
 </header>
 
+<div class="callout">
+  <b>2026-07-23 — Pin-Beschriftung auf echten Silkscreen umgestellt.</b> Alle Pin-Bezeichnungen
+  auf dieser Seite zeigen jetzt exakt das, was auf der Platine selbst aufgedruckt ist
+  (<span class="mono">docs/board-foto.jpg</span>, echtes Foto des vorliegenden Boards) statt der
+  zuvor verwendeten generischen <span class="mono">GPIOxx</span>-Schreibweise aus den
+  Vendor-Referenzgrafiken (<span class="mono">board.jpg</span>,
+  <span class="mono">board mit bezeichner.bmp</span>) — die beiden Quellen unterscheiden sich im
+  Druckbild: <span class="mono">G6</span> statt <span class="mono">GPIO6</span>,
+  <span class="mono">TX0</span>/<span class="mono">RX0</span> statt <span class="mono">GPIO43</span>/<span class="mono">GPIO44</span>. Elektrisch identisch, nur die Beschriftung
+  wechselt - die zugrundeliegende Pinbelegung (Abschnitt 7) bleibt exakt die bereits
+  cross-verifizierte aus <span class="mono">docs/entscheidungen.md</span>/<span class="mono">pinout.md</span>.
+</div>
+
 <div class="callout good">
   <b>Empfehlung: „Mit Optokoppler" verwenden.</b> Das ist auch die im Lastenheft (Abschnitt 10.3)
   geforderte Ausbaustufe, nicht nur eine von zwei gleichwertigen Optionen. Grund über die reine
@@ -231,8 +244,9 @@
       <span style="color:var(--ink-muted); font-size:13px;">links, näher am kleinen Bridge-IC neben der RGB-LED</span></div>
     </div>
     <p style="margin:0 0 6px; font-size:14px;">
-      Läuft über einen kleinen USB-UART-Bridge-Chip auf <span class="mono">U0TXD</span>/
-      <span class="mono">U0RXD</span> (GPIO43/GPIO44) — das ist der Port für
+      Läuft über einen kleinen USB-UART-Bridge-Chip auf den mit
+      <span class="mono">TX0</span>/<span class="mono">RX0</span> beschrifteten Header-Pins
+      (U0TXD/U0RXD, G43/G44) — das ist der Port für
       <span class="mono">pio run -t upload</span>, <span class="mono">esptool.py</span> und
       <span class="mono">pio device monitor</span>. Erscheint am Host-PC als klassischer
       CP210x/CH340-artiger COM-Port.
@@ -247,20 +261,20 @@
     <div class="port-figure">
       <svg width="46" height="46" viewBox="0 0 46 46"><rect x="6" y="14" width="34" height="18" rx="4" fill="none" stroke="var(--copper)" stroke-width="2.4"/><rect x="12" y="19" width="22" height="8" rx="2" fill="var(--copper-wash)"/></svg>
       <div><b style="font-size:15px;">Port B — Natives USB (CDC+HID)</b><br>
-      <span style="color:var(--ink-muted); font-size:13px;">rechts, direkt neben GPIO19-21-Ausbruch</span></div>
+      <span style="color:var(--ink-muted); font-size:13px;">rechts, direkt neben G19-21-Ausbruch</span></div>
     </div>
     <p style="margin:0 0 6px; font-size:14px;">
-      Läuft über den ESP32-S3-eigenen USB-OTG-Controller auf <span class="mono">GPIO20</span>
-      (D+) / <span class="mono">GPIO19</span> (D−) — der Port für das TinyUSB-Composite-Device
+      Läuft über den ESP32-S3-eigenen USB-OTG-Controller auf <span class="mono">G20</span>
+      (D+) / <span class="mono">G19</span> (D−) — der Port für das TinyUSB-Composite-Device
       (CDC-Konsole + HID-Tastatur + <span class="mono">##ESPR</span>-Kommandoprotokoll,
       siehe <span class="mono">usb_manager</span>). Fest verdrahtet im Chip, nicht per Software
       umlegbar.
     </p>
     <div class="confidence"><b>Korrektur zur Vendor-Beschriftung:</b> die Pinout-Bilder beschriften
-    <span class="mono">GPIO21=USB_D+, GPIO20=USB_D−</span> — laut ESP-IDFs eigenem SoC-Header
+    <span class="mono">G21=USB_D+, G20=USB_D−</span> — laut ESP-IDFs eigenem SoC-Header
     (<span class="mono">soc/usb_pins.h</span>: <span class="mono">USBPHY_DP_NUM=20</span>,
-    <span class="mono">USBPHY_DM_NUM=19</span>) ist das vertauscht/falsch: <b>D+ ist GPIO20, D− ist
-    GPIO19</b>, <span class="mono">GPIO21</span> hat mit nativem USB gar nichts zu tun und bleibt
+    <span class="mono">USBPHY_DM_NUM=19</span>) ist das vertauscht/falsch: <b>D+ ist G20, D− ist
+    G19</b>, <span class="mono">G21</span> hat mit nativem USB gar nichts zu tun und bleibt
     frei. Vendor-Vorlage vermutlich fehlerhaft übernommen — Chip-Datenblatt/ESP-IDF-Header schlägt
     ein Foto.</div>
   </div>
@@ -336,7 +350,7 @@
   <h3 style="margin-top:0;">Gehäuse-Taster (Power/Reset) — Pull-up, gegen GND schaltend</h3>
   <p style="margin:0 0 10px; font-size:14px;">
     Eigene Taster <b>am ESP-BMC-Gehäuse</b> (nicht die Taster am PC selbst!) — direkt auf
-    <span class="mono">GPIO4</span> (Power) / <span class="mono">GPIO5</span> (Reset), interner
+    <span class="mono">G4</span> (Power) / <span class="mono">G5</span> (Reset), interner
     Pull-up reicht, kein Bauteil nötig (Lastenheft 10.2: „kein gemeinsamer Knoten mit der
     Mainboard-Ansteuerung").
   </p>
@@ -354,7 +368,7 @@
     <tr><td>R_unten (Teiler → GND)</td><td class="mono">20&nbsp;kΩ</td><td>ergibt 3,33&nbsp;V bei 5&nbsp;V Eingang (sicherer Abstand zu 3,6&nbsp;V Abs.-Max.)</td></tr>
   </table>
   <p style="margin:8px 0 0; font-size:13px; color:var(--ink-muted);">
-    Teilerausgang → <span class="mono">GPIO15</span> (Power-LED) / <span class="mono">GPIO16</span>
+    Teilerausgang → <span class="mono">G15</span> (Power-LED) / <span class="mono">G16</span>
     (HDD-LED). Bei einem Mainboard, das seinen Header nachweislich schon auf 3,3&nbsp;V führt, ist
     der Teiler unschädlich (liefert dann nur ~2,2&nbsp;V, immer noch sicher als „High" erkennbar) —
     im Zweifel also immer einbauen.
@@ -383,16 +397,16 @@
   <text x="95" y="26" text-anchor="middle" class="blocklabel">ESP-BMC</text>
 
   <!-- Power-Kanal Label -->
-  <text x="30" y="130" class="pinlabel mono">GPIO6</text>
+  <text x="30" y="130" class="pinlabel mono">G6</text>
   <text x="30" y="145" class="sublabel">Power-Weiterleitung, Ausgang</text>
-  <text x="30" y="290" class="pinlabel mono">GPIO7</text>
+  <text x="30" y="290" class="pinlabel mono">G7</text>
   <text x="30" y="305" class="sublabel">Reset-Weiterleitung, Ausgang</text>
 
   <!-- gemeinsamer Pfad: ESP -> Vorwiderstand/Basiswiderstand -->
   <path class="wire-hit" data-wire="w1" d="M170,124 C 260,124 260,124 320,124"/>
-  <path class="wire" data-wire="w1" data-from="ESP GPIO6 (Ausgang)" data-to="Vorwiderstand/Basiswiderstand Power-Kanal" d="M170,124 C 260,124 260,124 320,124" stroke="var(--copper)"/>
+  <path class="wire" data-wire="w1" data-from="ESP G6 (Ausgang)" data-to="Vorwiderstand/Basiswiderstand Power-Kanal" d="M170,124 C 260,124 260,124 320,124" stroke="var(--copper)"/>
   <path class="wire-hit" data-wire="w2" d="M170,284 C 260,284 260,284 320,284"/>
-  <path class="wire" data-wire="w2" data-from="ESP GPIO7 (Ausgang)" data-to="Vorwiderstand/Basiswiderstand Reset-Kanal" d="M170,284 C 260,284 260,284 320,284" stroke="var(--copper)"/>
+  <path class="wire" data-wire="w2" data-from="ESP G7 (Ausgang)" data-to="Vorwiderstand/Basiswiderstand Reset-Kanal" d="M170,284 C 260,284 260,284 320,284" stroke="var(--copper)"/>
 
   <!-- Varianten-Gruppen -->
   <g id="variant-ohne" class="variant-block">
@@ -509,11 +523,16 @@
 </div>
 
 <h2><span class="num">5</span>Sensorik (identisch in beiden Varianten)</h2>
+<p class="section-lede">
+  NTC und DHT11 sitzen seit 2026-07-20 auf zuvor freien Pins der linken Leiste (vorher G1/G2
+  auf der rechten) - damit liegen alle zehn genutzten Signale (Sensorik + Abschnitt 4/6) auf einer
+  einzigen Pinleiste, eine Huckepack-Platine braucht dadurch nur eine Stiftleiste zum ESP-Board.
+</p>
 <div class="card">
   <table class="bom">
     <tr><th>Signal</th><th>ESP-Pin</th><th>Beschaltung</th></tr>
-    <tr><td>NTC 10K B3590 (Temperatur)</td><td class="mono">GPIO1</td><td>Spannungsteiler mit 10&nbsp;kΩ-Festwiderstand gegen 3,3&nbsp;V, Mittelpunkt an ADC1_CH0</td></tr>
-    <tr><td>DHT11 (Temperatur + Feuchte)</td><td class="mono">GPIO2</td><td>Datenleitung, bidirektional (1-Wire-artig), interner Pull-up des DHT11-Moduls reicht</td></tr>
+    <tr><td>NTC 10K B3590 (Temperatur)</td><td class="mono">G9</td><td>Spannungsteiler mit 10&nbsp;kΩ-Festwiderstand gegen 3,3&nbsp;V, Mittelpunkt an ADC1_CH8</td></tr>
+    <tr><td>DHT11 (Temperatur + Feuchte)</td><td class="mono">G11</td><td>Datenleitung, bidirektional (1-Wire-artig), interner Pull-up des DHT11-Moduls reicht</td></tr>
   </table>
 </div>
 
@@ -521,9 +540,9 @@
 <div class="card">
   <table class="bom">
     <tr><th>Signal</th><th>ESP-Pin</th><th>Beschaltung</th></tr>
-    <tr><td>Gehäuse-Power-LED ansteuern</td><td class="mono">GPIO17</td><td>direkter Ausgang (Lastenheft Abschnitt 5)</td></tr>
-    <tr><td>Gehäuse-HDD-LED ansteuern</td><td class="mono">GPIO18</td><td>direkter Ausgang</td></tr>
-    <tr><td>Watchdog-LED (RGB, onboard)</td><td class="mono">GPIO48</td><td>fest verdrahtet auf dem Modul (WS2812) — keine externe Verdrahtung, keine Wahl</td></tr>
+    <tr><td>Gehäuse-Power-LED ansteuern</td><td class="mono">G17</td><td>direkter Ausgang (Lastenheft Abschnitt 5)</td></tr>
+    <tr><td>Gehäuse-HDD-LED ansteuern</td><td class="mono">G18</td><td>direkter Ausgang</td></tr>
+    <tr><td>Watchdog-LED (RGB, onboard)</td><td class="mono">G48</td><td>fest verdrahtet auf dem Modul (WS2812) — keine externe Verdrahtung, keine Wahl</td></tr>
   </table>
 </div>
 
@@ -567,7 +586,8 @@
     <li>Funktionale Anforderungen: <span class="mono">docs/lastenheft.txt</span> Abschnitt 10, <span class="mono">docs/bom.md</span>.</li>
     <li>GPIO-Zuordnung der Firmware: <span class="mono">firmware/components/gpio_manager/include/gpio_manager.h</span>, <span class="mono">firmware/components/sensor_manager/include/sensor_manager.h</span>.</li>
   </ul>
-  <p>Stand 2026-07-18 — <span class="mono">docs/entscheidungen.md</span>, Eintrag „Verdrahtungsplan final + Pinbelegung fixiert". Nicht auf echter Hardware getestet.</p>
+  <p>Stand 2026-07-18, Pinbeschriftung 2026-07-23 auf reale Silkscreen-Namen umgestellt (<span class="mono">docs/board-foto.jpg</span> statt Vendor-Grafik) —
+  <span class="mono">docs/entscheidungen.md</span>, Einträge „Verdrahtungsplan final + Pinbelegung fixiert" und „Pinbeschriftung auf Silkscreen umgestellt". Nicht auf echter Hardware getestet.</p>
 </footer>
 
 </div>
@@ -615,47 +635,47 @@
     ["1","3V3",["power"],"3,3 V Versorgungsausgang des Boards"],
     ["2","3V3",["power"],"3,3 V Versorgungsausgang des Boards"],
     ["3","RST",["reserved"],"Chip-Reset, aktiv Low — keine GPIO, physischer RST-Taster hängt daran"],
-    ["4","GPIO4",["rtc","used"],"Verwendet: Power-Taste-Erfassung (Eingang, Pull-up, Gehäuse-Taster)"],
-    ["5","GPIO5",["rtc","used"],"Verwendet: Reset-Taste-Erfassung (Eingang, Pull-up, Gehäuse-Taster)"],
-    ["6","GPIO6",["rtc","used"],"Verwendet: Power-Weiterleitung (Ausgang → Transistor/PC817 → Mainboard)"],
-    ["7","GPIO7",["rtc","used"],"Verwendet: Reset-Weiterleitung (Ausgang → Transistor/PC817 → Mainboard)"],
-    ["15","GPIO15",["rtc","used"],"Verwendet: Power-LED-Erfassung (Eingang, über Spannungsteiler)"],
-    ["16","GPIO16",["rtc","used"],"Verwendet: HDD-LED-Erfassung (Eingang, über Spannungsteiler)"],
-    ["17","GPIO17",["rtc","used"],"Verwendet: Gehäuse-Power-LED-Ansteuerung (Ausgang)"],
-    ["18","GPIO18",["rtc","used"],"Verwendet: Gehäuse-HDD-LED-Ansteuerung (Ausgang)"],
-    ["8","GPIO8",["rtc","free"],"Frei — keine Sonderfunktion"],
-    ["3","GPIO3",["rtc","strap"],"Boot-Strapping-Pin (JTAG-Signalquelle) — nicht für dauerhaft gezogene Signale verwenden"],
-    ["46","GPIO46",["strap"],"Boot-Strapping-Pin (Boot-Log-Steuerung) — nicht für dauerhaft gezogene Signale verwenden"],
-    ["9","GPIO9",["rtc","free"],"Frei — keine Sonderfunktion"],
-    ["10","GPIO10",["rtc","free"],"Frei — keine Sonderfunktion"],
-    ["11","GPIO11",["rtc","free"],"Frei — keine Sonderfunktion"],
-    ["12","GPIO12",["rtc","free"],"Frei — keine Sonderfunktion"],
-    ["13","GPIO13",["rtc","free"],"Frei — keine Sonderfunktion"],
-    ["14","GPIO14",["rtc","free"],"Frei — keine Sonderfunktion"],
+    ["4","G4",["rtc","used"],"Verwendet: Power-Taste-Erfassung (Eingang, Pull-up, Gehäuse-Taster)"],
+    ["5","G5",["rtc","used"],"Verwendet: Reset-Taste-Erfassung (Eingang, Pull-up, Gehäuse-Taster)"],
+    ["6","G6",["rtc","used"],"Verwendet: Power-Weiterleitung (Ausgang → Transistor/PC817 → Mainboard)"],
+    ["7","G7",["rtc","used"],"Verwendet: Reset-Weiterleitung (Ausgang → Transistor/PC817 → Mainboard)"],
+    ["15","G15",["rtc","used"],"Verwendet: Power-LED-Erfassung (Eingang, über Spannungsteiler)"],
+    ["16","G16",["rtc","used"],"Verwendet: HDD-LED-Erfassung (Eingang, über Spannungsteiler)"],
+    ["17","G17",["rtc","used"],"Verwendet: Gehäuse-Power-LED-Ansteuerung (Ausgang)"],
+    ["18","G18",["rtc","used"],"Verwendet: Gehäuse-HDD-LED-Ansteuerung (Ausgang)"],
+    ["8","G8",["rtc","free"],"Frei — keine Sonderfunktion"],
+    ["3","G3",["rtc","strap"],"Boot-Strapping-Pin (JTAG-Signalquelle) — nicht für dauerhaft gezogene Signale verwenden"],
+    ["46","G46",["strap"],"Boot-Strapping-Pin (Boot-Log-Steuerung) — nicht für dauerhaft gezogene Signale verwenden"],
+    ["9","G9",["rtc","used"],"Verwendet: NTC-Temperatur, ADC1_CH8 (Spannungsteiler) — verschoben von G1 (rechte Leiste), damit alle Signale auf einer Leiste liegen"],
+    ["10","G10",["rtc","free"],"Frei — keine Sonderfunktion"],
+    ["11","G11",["rtc","used"],"Verwendet: DHT11-Datenleitung (1-Wire-artig) — verschoben von G2 (rechte Leiste), damit alle Signale auf einer Leiste liegen"],
+    ["12","G12",["rtc","free"],"Frei — keine Sonderfunktion"],
+    ["13","G13",["rtc","free"],"Frei — keine Sonderfunktion"],
+    ["14","G14",["rtc","free"],"Frei — keine Sonderfunktion"],
     ["21","5Vin",["power"],"Versorgungseingang 5 V — Ziel für ATX +5VSB (siehe Abschnitt 2)"],
     ["22","GND",["gnd"],"Masse"]
   ];
   var RIGHT = [
     ["1","GND",["gnd"],"Masse"],
-    ["2","GPIO43",["reserved"],"U0TXD — Debug-/Flash-UART (Bridge-Chip, Port A) — faktisch nicht frei"],
-    ["3","GPIO44",["reserved"],"U0RXD — Debug-/Flash-UART (Bridge-Chip, Port A) — faktisch nicht frei"],
-    ["4","GPIO1",["rtc","used"],"Verwendet: NTC-Temperatur, ADC1_CH0 (Spannungsteiler)"],
-    ["5","GPIO2",["rtc","used"],"Verwendet: DHT11-Datenleitung (1-Wire-artig)"],
-    ["6","GPIO42",["reserved"],"MTMS — JTAG, frei falls kein JTAG-Debugging genutzt wird"],
-    ["7","GPIO41",["reserved"],"MTDI — JTAG, frei falls kein JTAG-Debugging genutzt wird"],
-    ["8","GPIO40",["reserved"],"MTDO — JTAG, frei falls kein JTAG-Debugging genutzt wird"],
-    ["9","GPIO39",["reserved"],"MTCK — JTAG, frei falls kein JTAG-Debugging genutzt wird"],
-    ["10","GPIO38",["free"],"Frei — keine Sonderfunktion"],
-    ["11","GPIO37",["free"],"Frei — keine Sonderfunktion"],
-    ["12","GPIO36",["free"],"Frei — keine Sonderfunktion"],
-    ["13","GPIO35",["free"],"Frei — keine Sonderfunktion"],
-    ["14","GPIO0",["strap"],"BOOT — Boot-Modus-Strapping-Pin, physischer BOOT-Taster hängt daran — nicht anderweitig belegen"],
-    ["15","GPIO45",["strap"],"Strapping-Pin (VDD_SPI-Spannungswahl) — nicht anderweitig belegen"],
-    ["16","GPIO48",["used"],"Verwendet: Watchdog-RGB-LED (WS2812), onboard fest verdrahtet — keine externe Verdrahtung möglich/nötig"],
-    ["17","GPIO47",["free"],"Frei — keine Sonderfunktion"],
-    ["18","GPIO21",["free"],"Laut Vendor-Aufkleber „USB_D+“ — laut ESP-IDF-SoC-Header KEIN natives USB-Signal, vermutlich Beschriftungsfehler der Vorlage. Frei nutzbar."],
-    ["19","GPIO20",["reserved"],"Natives USB D+ (USBPHY_DP_NUM lt. ESP-IDF — Vendor-Aufkleber nennt fälschlich „USB_D−“) — reserviert, Port B"],
-    ["20","GPIO19",["reserved"],"Natives USB D− (USBPHY_DM_NUM lt. ESP-IDF — Vendor-Aufkleber nennt es nur „RTC“) — reserviert, Port B"],
+    ["2","TX0",["reserved"],"G43, U0TXD — Debug-/Flash-UART (Bridge-Chip, Port A) — faktisch nicht frei"],
+    ["3","RX0",["reserved"],"G44, U0RXD — Debug-/Flash-UART (Bridge-Chip, Port A) — faktisch nicht frei"],
+    ["4","G1",["rtc","free"],"Frei — keine Sonderfunktion (bis 2026-07-18 NTC, seit 2026-07-20 auf G9/linke Leiste verschoben)"],
+    ["5","G2",["rtc","free"],"Frei — keine Sonderfunktion (bis 2026-07-18 DHT11, seit 2026-07-20 auf G11/linke Leiste verschoben)"],
+    ["6","G42",["reserved"],"MTMS — JTAG, frei falls kein JTAG-Debugging genutzt wird"],
+    ["7","G41",["reserved"],"MTDI — JTAG, frei falls kein JTAG-Debugging genutzt wird"],
+    ["8","G40",["reserved"],"MTDO — JTAG, frei falls kein JTAG-Debugging genutzt wird"],
+    ["9","G39",["reserved"],"MTCK — JTAG, frei falls kein JTAG-Debugging genutzt wird"],
+    ["10","G38",["free"],"Frei — keine Sonderfunktion"],
+    ["11","G37",["free"],"Frei — keine Sonderfunktion"],
+    ["12","G36",["free"],"Frei — keine Sonderfunktion"],
+    ["13","G35",["free"],"Frei — keine Sonderfunktion"],
+    ["14","G0",["strap"],"BOOT — Boot-Modus-Strapping-Pin, physischer BOOT-Taster hängt daran — nicht anderweitig belegen"],
+    ["15","G45",["strap"],"Strapping-Pin (VDD_SPI-Spannungswahl) — nicht anderweitig belegen"],
+    ["16","G48",["used"],"Verwendet: Watchdog-RGB-LED (WS2812), onboard fest verdrahtet — keine externe Verdrahtung möglich/nötig"],
+    ["17","G47",["free"],"Frei — keine Sonderfunktion"],
+    ["18","G21",["free"],"Laut Vendor-Aufkleber „USB_D+“ — laut ESP-IDF-SoC-Header KEIN natives USB-Signal, vermutlich Beschriftungsfehler der Vorlage. Frei nutzbar."],
+    ["19","G20",["reserved"],"Natives USB D+ (USBPHY_DP_NUM lt. ESP-IDF — Vendor-Aufkleber nennt fälschlich „USB_D−“) — reserviert, Port B"],
+    ["20","G19",["reserved"],"Natives USB D− (USBPHY_DM_NUM lt. ESP-IDF — Vendor-Aufkleber nennt es nur „RTC“) — reserviert, Port B"],
     ["21","GND",["gnd"],"Masse"],
     ["22","GND",["gnd"],"Masse"]
   ];

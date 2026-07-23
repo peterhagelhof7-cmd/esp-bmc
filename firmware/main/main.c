@@ -70,28 +70,33 @@ void app_main(void) {
   time_manager_set_sync_result_cb(on_ntp_sync_result);
   network_manager_init();
 
-  // wireguard_manager_init() ist immer sicher (baut nur den lokalen Kontext
-  // auf, sendet nichts) - laedt eine per Web-UI hochgeladene Konfiguration
-  // von der storage-Partition, falls vorhanden, sonst die
-  // Kconfig-Platzhalterkonfiguration aus dem P1-Spike.
-  ESP_ERROR_CHECK(wireguard_manager_init());
-
-  // Tatsaechlich verbinden nur, wenn entweder eine echte (hochgeladene)
-  // Konfiguration vorliegt, oder der Entwickler-Platzhaltertest ueber
-  // Kconfig explizit gewuenscht ist (P1-Machbarkeits-Spike mit
-  // Platzhalter-Schluesseln, nur fuer Kompilier-/Footprint-Zwecke).
-  // CONFIG_ESP_BMC_WG_ENABLE existiert als C-Bezeichner nur, wenn der
-  // Kconfig-Bool auf "y" steht - daher der #if-Umweg statt einer direkten
-  // Laufzeitabfrage.
+  // ACHTUNG (2026-07-23, erster echter Hardware-Bring-up): entgegen dem
+  // Kommentar, der hier frueher stand ("wireguard_manager_init() ist immer
+  // sicher"), stuerzt der Aufruf auf echter Hardware reproduzierbar ab -
+  // Guru-Meditation-Error (LoadProhibited) in psa_crypto_init(), ausgeloest
+  // von esp_wireguard/wireguard-platform.c, vermutlich eine
+  // Inkompatibilitaet zwischen mbedTLS 4.x's "tf-psa-crypto"-Architektur
+  // (IDF 6.0.1) und dem esp_wireguard-Fork (siehe docs/entscheidungen.md).
+  // Bis das behoben ist: wireguard_manager_init() nur noch aufrufen, wenn
+  // WireGuard tatsaechlich gebraucht wird (hochgeladene Konfiguration
+  // vorhanden, geprueft OHNE init() vorher - siehe
+  // wireguard_manager_config_available()) oder der Kconfig-Entwicklertest
+  // explizit gewuenscht ist. CONFIG_ESP_BMC_WG_ENABLE existiert als
+  // C-Bezeichner nur, wenn der Kconfig-Bool auf "y" steht - daher der
+  // #if-Umweg statt einer direkten Laufzeitabfrage.
   bool wg_dev_test_requested = false;
 #if CONFIG_ESP_BMC_WG_ENABLE
   wg_dev_test_requested = true;
 #endif
-  if (wireguard_manager_has_uploaded_config() || wg_dev_test_requested) {
+  if (wireguard_manager_config_available() || wg_dev_test_requested) {
+    ESP_ERROR_CHECK(wireguard_manager_init());
     while (!network_manager_is_connected()) {
       vTaskDelay(pdMS_TO_TICKS(500));
     }
     wireguard_manager_connect();
+  } else {
+    ESP_LOGW(TAG, "WireGuard uebersprungen (bekannter Boot-Absturz-Bug, siehe docs/entscheidungen.md) - "
+                  "keine hochgeladene Konfiguration vorhanden");
   }
 
   ota_manager_init();

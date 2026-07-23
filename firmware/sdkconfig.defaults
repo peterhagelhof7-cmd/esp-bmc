@@ -36,10 +36,22 @@ CONFIG_ESP_ENABLE_WOLFSSH=y
 # ESP-IDF-Standard bereits aktiv (5s Timeout, Idle-Tasks beider Kerne
 # angemeldet), loest bei einem Timeout aber standardmaessig NUR eine
 # Log-Meldung aus, keinen Reboot (CONFIG_ESP_TASK_WDT_PANIC=n per
-# Default). Fuer eine echte Selbstheilung bei einer haengenden Task
-# explizit auf Panic+Reboot umgestellt - siehe
+# Default). Urspruenglich fuer eine echte Selbstheilung bei einer
+# haengenden Task explizit auf Panic+Reboot umgestellt - siehe
 # docs/entscheidungen.md "Watchdog-LED (RGB, GPIO48)".
-CONFIG_ESP_TASK_WDT_PANIC=y
+#
+# ACHTUNG (2026-07-23): erster echter Hardware-Bring-up zeigte einen
+# reproduzierbaren, bislang nicht root-ursachlich geklaerten Absturz -
+# IDLE0 (CPU 0) wird konsistent ~5,98s nach dem Boot nicht mehr
+# rechtzeitig eingeplant und ausgeloest, unabhaengig von WLAN-Aktivitaet
+# (mit komplett deaktiviertem Verbindungsversuch reproduziert - siehe
+# docs/entscheidungen.md "Erster echter Hardware-Bring-up"). Bis die
+# eigentliche Ursache gefunden ist, auf Nutzerwunsch temporaer wieder
+# auf n zurueckgestellt: ein Timeout wird nur noch geloggt, loest aber
+# keinen Panic+Reboot mehr aus. Die RGB-LED (watchdog_manager) blinkt
+# unveraendert weiter und dient weiterhin als visuelle
+# Lebenszeichen-Anzeige, unabhaengig von dieser Kconfig-Option.
+CONFIG_ESP_TASK_WDT_PANIC=n
 
 # OtaManager - Bootloader-Rollback: bleibt eine frisch geflashte OTA-
 # Firmware kurz nach dem Start haengen/stuerzt ab (bevor
@@ -48,3 +60,13 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 # funktionierende Partition zurueck. Per ESP-IDF-Default aus - explizit
 # aktiviert, siehe docs/entscheidungen.md "OTA-Update ...".
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Main-Task-Stack von 3584 (ESP-IDF-Default) auf 16384 angehoben - beim
+# ersten echten Hardware-Bring-up (2026-07-23) fand ssh_manager_init()'s
+# Host-Key-Erzeugung (generate_and_save_host_key(), wolfSSL SHA256 ueber
+# den generierten Schluessel) reproduzierbar einen Stack-Overflow auf dem
+# main-Task, direkt nach dem Start von SnmpManager. Diese Erzeugung laeuft
+# VOR dem dedizierten 8192-Byte ssh_task (siehe ssh_manager.c Kommentar
+# "sm-Stack-Overflow-Lehre") - der war zwar schon grosszuegig bemessen,
+# der main-Task selbst aber nicht. Siehe docs/entscheidungen.md.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384

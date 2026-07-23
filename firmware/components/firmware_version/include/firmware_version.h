@@ -7,4 +7,4 @@
 // Projekte sind trotzdem unabhaengig, keine gemeinsame Release-Klammer,
 // nur zufaellig derselbe Stand ("erste Beta").
 #define FIRMWARE_PROJECT_ID "ESP-BMC"
-#define DEVICE_FIRMWARE_VERSION "0.9.0-rc4"
+#define DEVICE_FIRMWARE_VERSION "0.9.0-rc5"

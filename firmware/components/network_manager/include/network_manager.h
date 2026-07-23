@@ -15,6 +15,13 @@ void network_manager_init(void);
 // true, sobald eine IP-Adresse zugewiesen wurde (IP_EVENT_STA_GOT_IP).
 bool network_manager_is_connected(void);
 
+// true, waehrend der Fallback-Access-Point "installer" aktiv ist (kein
+// konfiguriertes WLAN 5 Minuten lang erreichbar, siehe network_manager.c
+// start_fallback_ap()). Erreichbar unter 192.168.4.1, DHCP-Server aktiv -
+// neue Zugangsdaten ueber network_manager_join() eintragen, um zurueck auf
+// STA zu wechseln.
+bool network_manager_is_fallback_ap_active(void);
+
 // Schreibt die aktuelle WLAN-IP als String (z.B. "192.168.1.42") nach
 // out_buf (mind. 16 Byte). Liefert false, falls (noch) keine IP vorliegt -
 // out_buf enthaelt dann einen leeren String.

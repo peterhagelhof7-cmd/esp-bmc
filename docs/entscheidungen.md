@@ -2336,3 +2336,164 @@ als auch `root_get_handler()` gleichzeitig.
 
 Verifiziert per `pio run` fuer beide Umgebungen (n16r8/n8r8), beide
 sauber. Noch nicht auf echter Hardware getestet.
+
+## 2026-07-20 — Sensor-Pins auf die linke Leiste verschoben (Huckepack-Platine, nur eine Stiftleiste)
+
+Anlass: geplante Huckepack-Platine fuer die Optokoppler-/LED-/Sensor-
+Beschaltung soll nur eine einzige Stiftleiste zum ESP32-S3-DevKitC-1
+brauchen statt beider. Cross-Check der vollstaendigen 44-Pin-Tabelle aus
+`docs/verdrahtungsplan.html` ergab: die acht Taster-/LED-Pins aus
+`gpio_manager.h` (4/5/6/7/15/16/17/18) lagen bereits komplett auf der
+linken Leiste - nur die beiden Sensor-Pins aus `sensor_manager.h` (NTC auf
+GPIO1, DHT11 auf GPIO2) sassen auf der rechten.
+
+Beide auf zuvor freie, unkritische linke Pins verschoben:
+- NTC: GPIO1 (ADC1_CH0) -> **GPIO9 (ADC1_CH8)** - Kanalzuordnung gegen
+  `soc/esp32s3/include/soc/adc_channel.h` verifiziert (`ADC1_GPIO9_CHANNEL
+  = 8`), keine andere Verwendung auf GPIO9.
+- DHT11: GPIO2 -> **GPIO11** - reiner Digital-Pin, kein Strapping/JTAG/
+  UART/USB-Konflikt laut derselben 44-Pin-Tabelle.
+
+Damit liegen jetzt alle zehn genutzten Signale auf der linken Leiste;
+GPIO1/GPIO2 auf der rechten Leiste sind wieder frei. `sensor_manager.h`
+und `gpio_manager.h` Kommentare aktualisiert, `docs/verdrahtungsplan.html`
+(Sensorik-Tabelle + vollstaendige 44-Pin-Tabelle) entsprechend
+nachgezogen. Verifiziert per `pio run` fuer beide Umgebungen (n16r8/n8r8),
+beide sauber. Noch nicht auf echter Hardware getestet (kein Board
+vorhanden) - insbesondere die ADC-Kalibrierwerte fuer GPIO9 sind bislang
+nur aus dem SoC-Header abgeleitet, nicht real gemessen.
+
+## 2026-07-23 — Pinbeschriftung auf Silkscreen umgestellt (docs/verdrahtungsplan.html)
+
+Auf Nutzerwunsch alle Pin-Bezeichnungen in `docs/verdrahtungsplan.html`
+von der generischen `GPIOxx`-Schreibweise auf das umgestellt, was
+tatsaechlich auf der Platine aufgedruckt ist. Dabei ein Unterschied
+zwischen den beiden bisherigen Bildquellen entdeckt:
+
+- `board.jpg`/`board mit bezeichner.bmp` (Vendor-Referenzgrafiken) drucken
+  bare Zahlen ohne Praefix (`4`, `43`, `0`, ...) und `TX`/`RX` fuer die
+  Debug-UART-Pins.
+- `docs/board-foto.jpg` (echtes Foto des tatsaechlich vorliegenden Boards)
+  zeigt stattdessen `G`-Praefix (`G4`, `G43`, `G0`, ...) und `TX0`/`RX0`
+  fuer dieselben Pins - eine andere Silkscreen-Revision derselben
+  Modulfamilie.
+
+Als massgeblich das echte Foto (`board-foto.jpg`) behandelt, da es das
+tatsaechlich vorliegende Bauteil zeigt, nicht nur eine generische
+Vendor-Abbildung. Ergebnis: durchgaengig `Gxx` statt `GPIOxx` (reine
+Textumstellung, 1:1 selbe Nummer), plus `TX0`/`RX0` statt `GPIO43`/`GPIO44`
+an den entsprechenden Stellen (Abschnitt 1 USB-Beschreibung, Abschnitt 7
+Pintabelle, Diagramm-Beschriftungen in Abschnitt 4). Die zugrundeliegende,
+bereits mehrfach verifizierte Pin-zu-GPIO-Zuordnung selbst (Abschnitt 7,
+`pinout.md`) ist davon nicht betroffen - reine Anzeige-/Beschriftungsfrage,
+keine electrische Aenderung. Bilder ausgewertet per Zuschnitt/Vergroesserung
+(PowerShell `System.Drawing`), keine echte Hardware vorhanden zum
+Gegenpruefen mit einem Multimeter/der Platine selbst.
+
+## 2026-07-23 — Erster echter Hardware-Bring-up: drei Boot-Abstuerze gefunden, zwei behoben
+
+Erstes Mal, dass die Firmware auf echtem Silizium lief (N16R8-Board,
+vorher nur Wokwi-Simulation/Build-Verifikation). Board-Identitaet vorab
+per `esptool.py flash_id` bestaetigt (echtes ESP32-S3, 16 MB Flash, 8 MB
+PSRAM - passt zum Ziel-Environment). Drei reproduzierbare Abstuerze
+gefunden:
+
+1. **WireGuard-Boot-Crash** (Guru Meditation LoadProhibited in
+   `psa_crypto_init()`, ausgeloest von `esp_wireguard`/
+   `wireguard-platform.c`): vermutlich eine Inkompatibilitaet zwischen
+   mbedTLS 4.x's "tf-psa-crypto"-Architektur (IDF 6.0.1) und dem
+   `esp_wireguard`-Fork - `CONFIG_MBEDTLS_THREADING_C`/`_PTHREAD` waren
+   bereits korrekt gesetzt, also keine einfache Kconfig-Luecke. Nicht an
+   der Wurzel behoben, nur umgangen: `wireguard_manager_init()` wird jetzt
+   nur noch aufgerufen, wenn tatsaechlich eine hochgeladene Konfiguration
+   existiert (`wireguard_manager_config_available()`, neu) oder der
+   Kconfig-Entwicklertest explizit gewuenscht ist (siehe Kommentar in
+   `main.c`). `wireguard_manager_is_up()`/`_disconnect()` zusaetzlich gegen
+   `s_ctx.netif == NULL` abgesichert, da sie sonst crashen wuerden, wenn
+   init() uebersprungen wurde.
+2. **SSH-Stack-Overflow** (`Transform_Sha256` in wolfSSL, waehrend
+   `ssh_manager_init()`s Host-Key-Erzeugung auf dem main-Task): der
+   main-Task selbst war mit dem ESP-IDF-Default (3584 Byte) zu knapp
+   bemessen, obwohl der dedizierte `ssh_task` bereits grosszuegig war.
+   Behoben: `CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384` in
+   `sdkconfig.defaults`.
+3. **Task-Watchdog-Absturz (IDLE0/CPU0)**: siehe eigener Abschnitt unten
+   ("WLAN-Reconnect-Sturm") - Ursache gefunden und behoben.
+
+### WLAN-Reconnect-Sturm ohne Backoff hat den Task-Watchdog ausgehungert
+
+Der dritte Absturz (Task-Watchdog-Panic, IDLE0 auf CPU0 kam nicht mehr
+zum Zug) zeigte im Panic-Snapshot zunaechst `gpio_manager` als
+laufende Task - das war aber eine Fehlspur: alle vier Sense-Pins
+(`GPIO_REMOTE_POWER_SENSE`, `_RESET_SENSE`, `_POWER_LED_IN`,
+`_HDD_LED_IN`) haben bereits interne Pull-ups (`configure_input_pullup()`
+in `gpio_manager_init()`), floaten also nicht, selbst wenn (wie auf dem
+Testaufbau) kein echter PC angeschlossen ist.
+
+Tatsaechliche Ursache: `network_manager.c`s `WIFI_EVENT_STA_DISCONNECTED`-
+Handler rief bislang synchron und ohne jede Verzoegerung
+`esp_wifi_connect()` auf. Auf dem Testaufbau war noch kein WLAN
+hochgeladen, die Firmware versuchte also dauerhaft die
+Kconfig-Platzhalter-SSID `CHANGE_ME_SSID` zu joinen - das schlaegt sofort
+fehl, loest sofort das naechste DISCONNECTED-Event aus, usw. Dieser
+ungebremste Sturm hat den Task-Watchdog ausgehungert.
+
+Behoben nach demselben bewaehrten Muster wie `sensormeter-wlan`s
+`NetworkManager.cpp`: der Disconnect-Handler loest keinen Reconnect mehr
+direkt aus, sondern setzt nur noch `s_connected = false`. Ein neuer,
+periodischer `esp_timer` (`network_manager_tick()`, 5s-Takt) treibt
+stattdessen eine kleine Zustandsmaschine (`WLAN_CHECK` / `FALLBACK_MODE`
+/ `RUN_NORMAL`), die Reconnect-Versuche auf maximal einen pro 20s
+begrenzt (`RECONNECT_RETRY_INTERVAL_US`) und nur, wenn ueberhaupt eine
+SSID gesetzt ist.
+
+### Fallback-Access-Point (Nachtrag zur Entscheidung "Kein AP-Fallback-Abschnitt")
+
+Der obige Eintrag "Bewusste Abweichungen vom Vorbild" (Admin-Guide,
+weiter oben in diesem Dokument) haelt fest, dass ESP-BMC anders als
+sensormeter-wlan bewusst KEINEN Access-Point-Ersteinrichtungsmodus hat,
+weil die Ersteinrichtung ueber USB (`tools/Setup.ps1`) laeuft. Auf
+ausdruecklichen Nutzerwunsch nachtraeglich doch ergaenzt: bleibt ein
+konfiguriertes WLAN 5 Minuten lang (`WLAN_CHECK_TIMEOUT_US`, bewaehrter
+Wert aus sensormeter-wlan) unerreichbar, startet `network_manager.c`
+einen eigenen Access Point (`installer`/`installer`, 192.168.4.1/24,
+eigener DHCP-Server, kein Routing ins Internet - 1:1 dieselben Werte wie
+sensormeter-wlan). `web_server_manager` bleibt darueber erreichbar, neue
+WLAN-Zugangsdaten koennen wie gewohnt per `network_manager_join()`
+eingetragen werden, was zurueck auf STA-Modus schaltet. Die
+USB-Ersteinrichtung bleibt der primaere, empfohlene Weg fuer die
+Erstinbetriebnahme - der AP ist ein zusaetzliches Sicherheitsnetz fuer
+den Fall, dass ein einmal funktionierendes WLAN spaeter dauerhaft
+wegfaellt (Router-Tausch, falsches Passwort nach einer Aenderung, etc.),
+ohne dass USB-Zugriff auf das Geraet noch moeglich/bequem waere.
+Sicherheitsaspekt bewusst nicht weiter gehaertet (festes
+Standardpasswort "installer", wie im Vorbild) - falls das Geraet in
+einer Umgebung eingesetzt wird, in der ein offener Fallback-AP ein
+inakzeptables Risiko waere, muesste das gesondert adressiert werden.
+
+## 2026-07-23, spaeter am selben Tag — SNMP-Test: Stack-Overflow bei SET-Anfragen gefunden und behoben
+
+Erster echter SNMP-Test gegen das Geraet (net-snmp `snmpwalk`/`snmpget`/
+`snmpset` aus WSL, da auf dem Windows-Host keine SNMP-Tools verfuegbar
+waren). GET-Anfragen gegen alle 17 Custom-OIDs
+(`1.3.6.1.4.1.99999.10.x`) liefen sofort einwandfrei und lieferten
+plausible Werte (SSID, IP, Firmware-Version, Sensorwerte, Uptime, ...).
+
+Ein SET (`OID_POWER_KEY`, mit der `private`-Community, wie ein SNMP-
+Fernauslösen des Power-Tasters) fuehrte dagegen reproduzierbar zu einem
+Absturz - Seriellausgabe zeigte explizit "A stack overflow in task
+snmp_manager has been detected". Ursache: der SNMP-Task
+(`xTaskCreate(snmp_task, "snmp_manager", 4096, ...)`) hatte nur 4096
+Byte Stack - fuer reine GET-Antworten (BER-Kodierung ohne weitere
+Aufrufe) ausreichend, aber `set_power_key()` ruft zusaetzlich
+`gpio_manager_trigger_power()` sowie `audit_log_add()` mit einem
+lokalen 96-Byte-Formatpuffer auf, alles noch auf demselben Stack
+oberhalb der laufenden BER-Anfrageverarbeitung - in Summe zu viel fuer
+4096 Byte. Behoben durch Anheben auf 8192 Byte (`snmp_manager.c`,
+`snmp_manager_init()`) - gleiche Groessenordnung wie `ssh_manager`s
+dedizierter Task, aus demselben strukturellen Grund (mehrschichtige
+Aufrufe mit lokalen Formatpuffern, siehe dortigen Kommentar
+"sm-Stack-Overflow-Lehre"). Nach dem Fix auf echter Hardware verifiziert:
+SET liefert den gesetzten Wert korrekt zurueck, kein Absturz mehr,
+Zugriffskontrolle (SET mit der `public`/Read-only-Community wird
+weiterhin korrekt mit einem SNMP-Fehler abgelehnt) unveraendert intakt.

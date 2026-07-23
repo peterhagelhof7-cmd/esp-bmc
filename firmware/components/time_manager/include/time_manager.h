@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <time.h>
 
 // TimeManager - NTP-Zeitsynchronisation, analog dem bewaehrten Muster der
 // Sensormeter-Familie: sofortiger Resync bei jedem Netzwerk-Link-Up
@@ -16,6 +17,11 @@ void time_manager_notify_link_up(void);
 
 // true, sobald die Zeit mindestens einmal erfolgreich synchronisiert wurde.
 bool time_manager_is_synced(void);
+
+// Unix-Zeitstempel des letzten ERFOLGREICHEN NTP-Syncs (on_time_sync()) - 0,
+// wenn seit dem Boot noch nie erfolgreich synchronisiert wurde. Fuer die
+// Anzeige "letzter NTP-Sync" auf der Uebersichtsseite gedacht.
+time_t time_manager_get_last_sync(void);
 
 // Wird nach jedem einzelnen Sync-Versuch (Link-Up-Resync oder 5h-Rhythmus)
 // mit dem Erfolg dieses Versuchs aufgerufen - fuer das Audit-Log

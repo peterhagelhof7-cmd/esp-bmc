@@ -100,7 +100,7 @@ mit aktuellem Stand:
 | Versandweg Benachrichtigungen | offen | ✅ entschieden und gebaut: Syslog (UDP) + SMTP ohne TLS (bewusst, kein zweiter Krypto-Stack neben wolfSSL) — **Hardware-Test steht noch aus** |
 | Konfigurationsformat | XML (Kandidat) vs. JSON | ✅ entschieden: JSON (cJSON), nicht XML wie ursprünglich vermutet |
 | Log-/Diagnoseformat | offen | ✅ entschieden und gebaut (persistentes Audit-Log mit Rotation, analog Sensormeter-Familie) |
-| GPIO-Pinbelegung | offen, hängt vom Pinout ab | ✅ **entschieden und final festgelegt** (2026-07-18) — alle 10 Kanäle gegen Vendor-Pinout-Bilder + ESP-IDF-SoC-Header abgeglichen, keine Kollision mit Strapping-Pins/JTAG/UART/USB. Vollständiger interaktiver Verdrahtungsplan: `docs/verdrahtungsplan.html`. **Noch nicht auf echter Hardware verifiziert** (kein Board vorhanden) |
+| GPIO-Pinbelegung | offen, hängt vom Pinout ab | ✅ **entschieden und final festgelegt** (2026-07-18, Sensor-Pins am 2026-07-20 auf die linke Leiste verschoben) — alle 10 Kanäle liegen jetzt auf einer einzigen Pinleiste (Huckepack-Platine braucht nur eine Stiftleiste), gegen Vendor-Pinout-Bilder + ESP-IDF-SoC-Header abgeglichen, keine Kollision mit Strapping-Pins/JTAG/UART/USB. Vollständiger interaktiver Verdrahtungsplan: `docs/verdrahtungsplan.html`. **Noch nicht auf echter Hardware verifiziert** (kein Board vorhanden) |
 | Bauteilbedarf serieller BIOS-Zugriff | offen | ⭕ weiterhin offen, `docs/bom.md` nicht nachgetragen |
 
 Zusätzlich, unabhängig von der ursprünglichen offenen-Punkte-Liste:

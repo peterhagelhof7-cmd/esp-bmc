@@ -306,9 +306,22 @@ esp_err_t wireguard_manager_connect(void) {
   return ESP_OK;
 }
 
-bool wireguard_manager_is_up(void) { return esp_wireguardif_peer_is_up(&s_ctx) == ESP_OK; }
+// s_ctx.netif ist nur gesetzt, nachdem wireguard_manager_init() tatsaechlich
+// gelaufen ist (siehe main.c - wird seit dem Boot-Absturz-Fund 2026-07-23
+// nicht mehr unbedingt aufgerufen). Ohne diese Pruefung wuerde
+// esp_wireguardif_peer_is_up() mit netif==NULL entweder abstuerzen oder
+// einen LWIP_ASSERT ausloesen (wireguardif.c, wireguardif_lookup_peer).
+bool wireguard_manager_is_up(void) {
+  if (s_ctx.netif == NULL) return false;
+  return esp_wireguardif_peer_is_up(&s_ctx) == ESP_OK;
+}
 
-esp_err_t wireguard_manager_disconnect(void) { return esp_wireguard_disconnect(&s_ctx); }
+// Gleicher netif==NULL-Schutz wie wireguard_manager_is_up() - siehe
+// dortigen Kommentar.
+esp_err_t wireguard_manager_disconnect(void) {
+  if (s_ctx.netif == NULL) return ESP_OK;
+  return esp_wireguard_disconnect(&s_ctx);
+}
 
 esp_err_t wireguard_manager_apply_uploaded_config(const char* conf_text) {
   if (!parse_conf(conf_text)) {
@@ -335,6 +348,13 @@ esp_err_t wireguard_manager_delete_config(void) {
 }
 
 bool wireguard_manager_has_uploaded_config(void) { return s_has_uploaded_config; }
+
+bool wireguard_manager_config_available(void) {
+  FILE* f = fopen(WG_CONFIG_FILE, "r");
+  if (!f) return false;
+  fclose(f);
+  return true;
+}
 
 void wireguard_manager_get_local_address(char* out, size_t out_len) {
   strncpy(out, s_local_address, out_len - 1);

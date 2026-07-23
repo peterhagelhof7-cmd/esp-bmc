@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "audit_log.h"
 #include "config_manager.h"
@@ -21,6 +22,7 @@
 #include "sensor_manager.h"
 #include "snmp_manager.h"
 #include "ssh_manager.h"
+#include "time_manager.h"
 #include "usb_manager.h"
 #include "user_manager.h"
 #include "wireguard_manager.h"
@@ -210,11 +212,40 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
   char ip[16] = "-";
   network_manager_get_ip_string(ip, sizeof(ip));
 
+  char ssid[33] = "-";
+  network_manager_get_ssid(ssid, sizeof(ssid));
+  if (ssid[0] == '\0') snprintf(ssid, sizeof(ssid), "(keins konfiguriert)");
+
+  // Lokale Zeit (TZ Europe/Berlin, siehe time_manager.c) statt UTC/Epoch -
+  // fuer eine Statusanzeige auf der Uebersichtsseite ist die lesbare
+  // Ortszeit hilfreicher als ein roher Unix-Zeitstempel.
+  char ntp_str[32];
+  time_t last_sync = time_manager_get_last_sync();
+  if (last_sync != 0) {
+    struct tm tm_info;
+    localtime_r(&last_sync, &tm_info);
+    strftime(ntp_str, sizeof(ntp_str), "%Y-%m-%d %H:%M:%S", &tm_info);
+  } else {
+    snprintf(ntp_str, sizeof(ntp_str), "noch nie");
+  }
+
   float ntc_temp = 0, dht_temp = 0, dht_hum = 0;
   bool ntc_ok = sensor_manager_get_ntc_temp_c(&ntc_temp);
   bool dht_ok = sensor_manager_get_dht_temp_c(&dht_temp) && sensor_manager_get_dht_humidity_pct(&dht_hum);
 
   int64_t uptime_s = esp_timer_get_time() / 1000000;
+
+  // Host-Uptime (aus der Power-LED-Erfassung abgeleitet, gpio_manager.c) -
+  // ausdruecklich getrennt von der ESP-eigenen Boot-Uptime oben, siehe
+  // Kartenbeschriftung "Uptime ESP-BMC" unten.
+  int64_t host_uptime_s = 0;
+  bool host_uptime_ok = gpio_manager_host_uptime_seconds(&host_uptime_s);
+  char host_uptime_str[32];
+  if (host_uptime_ok) {
+    snprintf(host_uptime_str, sizeof(host_uptime_str), "%lld s", (long long)host_uptime_s);
+  } else {
+    snprintf(host_uptime_str, sizeof(host_uptime_str), "Host AUS oder nicht erkannt");
+  }
 
   bool power_led_on = gpio_manager_read_power_led();
   bool hdd_led_recent = gpio_manager_hdd_led_active_recently();
@@ -321,7 +352,8 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
            "</style></head><body>"
            "<h1>ESP-BMC &mdash; Uebersicht</h1>"
            "<p>Angemeldet als <b>%s</b> (%s) &middot; <a href=\"/logout\">Abmelden</a></p>"
-           "<div class=\"card\"><b>Netzwerk</b><br>WLAN-IP: %s<br>"
+           "<div class=\"card\"><b>Netzwerk</b><br>WLAN-SSID: %s<br>WLAN-IP: %s<br>"
+           "Letzter NTP-Sync: %s<br>"
            "VPN-IP: %s &middot; Ziel: %s<br>"
            "VPN-Status: <span class=\"led %s\"></span>%s"
            "</div>"
@@ -330,7 +362,8 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
            "</div>"
            "<div class=\"card\"><b>Sensorwerte, 24h</b><br>"
            "<canvas id=\"chart\" height=\"200\"></canvas></div>"
-           "<div class=\"card\"><b>System</b><br>Uptime: %lld s<br>"
+           "<div class=\"card\"><b>System</b><br>Uptime ESP-BMC: %lld s<br>"
+           "Uptime Host: %s<br>"
            "Power-LED: <span class=\"led %s\"></span>%s<br>"
            "HDD-Aktivitaet (letzte 10s): <span class=\"led %s\"></span>%s"
            "</div>"
@@ -352,9 +385,9 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
            "options:{scales:{y:{position:'left'},y1:{position:'right',grid:{drawOnChartArea:false}}}}});});"
            "</script>"
            "</body></html>",
-           username, role_name(role), ip, wg_local_ip, wg_endpoint, wg_up ? "vpn-up" : "vpn-down",
-           wg_up ? "verbunden" : "getrennt", ntc_str, dht_str, (long long)uptime_s, power_led_on ? "on" : "off",
-           power_led_on ? "aktiv" : "inaktiv", hdd_led_recent ? "hdd-on" : "hdd-off",
+           username, role_name(role), ssid, ip, ntp_str, wg_local_ip, wg_endpoint, wg_up ? "vpn-up" : "vpn-down",
+           wg_up ? "verbunden" : "getrennt", ntc_str, dht_str, (long long)uptime_s, host_uptime_str,
+           power_led_on ? "on" : "off", power_led_on ? "aktiv" : "inaktiv", hdd_led_recent ? "hdd-on" : "hdd-off",
            hdd_led_recent ? "aktiv" : "inaktiv", ssh_host_card, notify_card, ssh_card);
 
   httpd_resp_set_type(req, "text/html");
@@ -615,6 +648,11 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       "<div class=\"card\"><h2>WLAN-Scan</h2>"
       "<a href=\"/settings?scan=1\"><button type=\"button\">Scan starten</button></a>"
       "%s"
+      "<form method=\"post\" action=\"/settings/wlan/join\">"
+      "<label>SSID (aus der Liste oben abschreiben)</label><input type=\"text\" name=\"ssid\" required>"
+      "<label>WLAN-Passwort (leer lassen bei offenem Netz)</label><input type=\"password\" name=\"psk\">"
+      "<button type=\"submit\">Verbinden</button>"
+      "</form>"
       "</div>"
 
       "<div class=\"card\"><h2>WireGuard-VPN</h2>"
@@ -767,6 +805,43 @@ static esp_err_t settings_network_post_handler(httpd_req_t* req) {
   bool ok = network_manager_apply_static_ip(ip, netmask, gateway);
   ESP_LOGI(TAG, "%s hat statische IP %s versucht: %s", username, ip, ok ? "erfolgreich" : "Ping-Check fehlgeschlagen");
   redirect_to(req, ok ? "/settings" : "/settings?failed=network");
+  return ESP_OK;
+}
+
+// ACHTUNG (2026-07-23, Fund beim Fallback-AP-Test): network_manager_join()
+// existierte bereits und war ueber die USB-CLI erreichbar
+// (usb_manager.c::cmd_wlan_join, siehe tools/EspBmcLink.psm1
+// Join-EspBmcWlan), aber im Webinterface fehlte dafuer jeder Aufrufer -
+// die "WLAN-Scan"-Karte zeigte Ergebnisse bislang nur als reinen Text ohne
+// SSID/PSK-Eingabe oder Submit-Pfad. Genau ueber den Fallback-Access-Point
+// (kein USB-Zugriff moeglich/bequem) ist das aber der einzige Weg, ein
+// neues Netz einzutragen - deshalb hier nachgetragen.
+static esp_err_t settings_wlan_join_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_VERWALTER, username, &role)) return ESP_OK;
+
+  char body[128] = {0};
+  size_t to_read = req->content_len < sizeof(body) - 1 ? req->content_len : sizeof(body) - 1;
+  int received = httpd_req_recv(req, body, to_read);
+  if (received <= 0) return ESP_FAIL;
+  body[received] = '\0';
+
+  char ssid[33], psk[64];
+  parse_form_field(body, "ssid", ssid, sizeof(ssid));
+  parse_form_field(body, "psk", psk, sizeof(psk));
+
+  if (ssid[0] == '\0') {
+    redirect_to(req, "/settings?failed=wlan_join");
+    return ESP_OK;
+  }
+
+  network_manager_join(ssid, psk);
+  ESP_LOGI(TAG, "%s hat WLAN-Beitritt zu \"%s\" angestossen", username, ssid);
+  char event[128];
+  snprintf(event, sizeof(event), "WLAN-Beitritt angestossen: %s (%s)", ssid, username);
+  audit_log_add(event);
+  redirect_to(req, "/settings");
   return ESP_OK;
 }
 
@@ -1345,11 +1420,82 @@ static esp_err_t logs_audit_download_handler(httpd_req_t* req) {
 // 3.6 "WebSocket-Handler fuer serielle Konsole").
 // ---------------------------------------------------------------------
 
+// Einfache Terminal-Seite: Ausgabe-Bereich + Zeilen-Eingabe, verbindet per
+// WebSocket zu ws_console_handler() (gleicher Origin, daher relative URL
+// "/ws/console" - funktioniert unveraendert sowohl ueber die normale
+// WLAN-IP als auch ueber den Fallback-Access-Point). Zeilenbasiert statt
+// zeichenweise gesendet - bewusst einfach gehalten fuer diese erste
+// Ausbaustufe (siehe Kommentar bei console_pump_task: "nur ein
+// gleichzeitiger Konsolen-Client").
+static esp_err_t console_get_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_SSH_USER, username, &role)) return ESP_OK;
+
+  static const char* PAGE =
+      "<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"utf-8\">"
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+      "<title>ESP-BMC - Webconsole</title>"
+      "<style>"
+      "body{font-family:sans-serif;background:#f2f0e9;margin:0;padding:1.5rem;color:#1c2430;}"
+      "h1{font-size:1.2rem;}"
+      "#term{background:#12161f;color:#d8dce6;font-family:monospace;font-size:0.85rem;"
+      "padding:0.8rem;border-radius:6px;height:60vh;overflow-y:auto;white-space:pre-wrap;"
+      "word-break:break-all;}"
+      "#in{width:100%;padding:0.5rem;box-sizing:border-box;border:1px solid #ccc;"
+      "border-radius:4px;font-family:monospace;margin-top:0.5rem;}"
+      "#status{font-size:0.8rem;color:#666;margin-top:0.3rem;}"
+      "a{color:#0f1f3d;}"
+      "</style></head><body>"
+      "<h1>ESP-BMC &mdash; Webconsole</h1>"
+      "<p><a href=\"/\">Zur Uebersicht</a></p>"
+      "<div id=\"term\"></div>"
+      "<input id=\"in\" type=\"text\" placeholder=\"Befehl eingeben, Enter zum Senden\" autocomplete=\"off\">"
+      "<div id=\"status\">verbinde...</div>"
+      "<script>"
+      "const term=document.getElementById('term');"
+      "const inp=document.getElementById('in');"
+      "const st=document.getElementById('status');"
+      "function log(s){term.textContent+=s;term.scrollTop=term.scrollHeight;}"
+      "const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/console');"
+      "ws.onopen=()=>{st.textContent='verbunden';inp.focus();};"
+      "ws.onclose=()=>{st.textContent='Verbindung getrennt';};"
+      "ws.onerror=()=>{st.textContent='Fehler - keine Berechtigung oder Verbindung fehlgeschlagen';};"
+      "ws.onmessage=(ev)=>{log(ev.data);};"
+      "inp.addEventListener('keydown',(ev)=>{"
+      "if(ev.key==='Enter'){"
+      "const line=inp.value;"
+      "if(ws.readyState===WebSocket.OPEN){ws.send(line+'\\n');log('> '+line+'\\n');}"
+      "inp.value='';"
+      "}"
+      "});"
+      "</script>"
+      "</body></html>";
+
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_send(req, PAGE, HTTPD_RESP_USE_STRLEN);
+  return ESP_OK;
+}
+
+// ACHTUNG (2026-07-23, Fund beim "/console 404"-Test): die eigentliche
+// Konsolen-HTML-Seite (oben, console_get_handler) fehlte bislang komplett -
+// die Uebersichtsseite verlinkte auf "/console", aber es gab dafuer nie
+// einen registrierten Handler ("Nothing matches the given URI"). Beim
+// Nachbauen aufgefallen: der WebSocket-Handshake selbst pruefte bislang GAR
+// KEINE Session/Rolle - jeder, der die URL kennt, haette ohne Login
+// Rohzugriff auf die serielle Konsole des angeschlossenen PCs gehabt. Gleiche
+// Mindestrolle wie der SSH-Zugang (USER_ROLE_SSH_USER) - thematisch
+// naechstliegender Vergleichsfall, da beides Rohzugriff auf denselben
+// CDC-Kanal ist.
 static esp_err_t ws_console_handler(httpd_req_t* req) {
   if (req->method == HTTP_GET) {
+    char username[32];
+    user_role_t role;
+    if (!require_role(req, USER_ROLE_SSH_USER, username, &role)) return ESP_OK;
+
     s_ws_console_fd = httpd_req_to_sockfd(req);
     usb_manager_console_claim(CONSOLE_OWNER_WEB);
-    ESP_LOGI(TAG, "WebSocket-Konsole verbunden (fd=%d)", s_ws_console_fd);
+    ESP_LOGI(TAG, "WebSocket-Konsole verbunden (fd=%d, %s)", s_ws_console_fd, username);
     return ESP_OK;
   }
 
@@ -1399,7 +1545,7 @@ static void console_pump_task(void* arg) {
 void web_server_manager_init(void) {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.uri_match_fn = httpd_uri_match_wildcard;
-  config.max_uri_handlers = 28;  // Default (8) reicht seit Einstellungen+Logs nicht mehr
+  config.max_uri_handlers = 32;  // Default (8) reicht seit Einstellungen+Logs nicht mehr; etwas Reserve ueber die aktuell 28 registrierten
   // ESP-IDFs Default-Stackgroesse fuer den httpd-Worker-Task ist 4096 Byte
   // (siehe HTTPD_DEFAULT_CONFIG() in esp_http_server.h) - settings_get_handler()
   // allein summiert allein bei seinen groesseren lokalen Puffern
@@ -1425,6 +1571,7 @@ void web_server_manager_init(void) {
   httpd_uri_t login_post = {.uri = "/login", .method = HTTP_POST, .handler = login_post_handler};
   httpd_uri_t logout_get = {.uri = "/logout", .method = HTTP_GET, .handler = logout_get_handler};
   httpd_uri_t root_get = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler};
+  httpd_uri_t console_get = {.uri = "/console", .method = HTTP_GET, .handler = console_get_handler};
   httpd_uri_t account_ssh_key_post = {
       .uri = "/account/ssh-key", .method = HTTP_POST, .handler = account_ssh_key_post_handler};
   httpd_uri_t account_notify_post = {
@@ -1433,6 +1580,8 @@ void web_server_manager_init(void) {
   httpd_uri_t settings_get = {.uri = "/settings", .method = HTTP_GET, .handler = settings_get_handler};
   httpd_uri_t settings_network_post = {
       .uri = "/settings/network", .method = HTTP_POST, .handler = settings_network_post_handler};
+  httpd_uri_t settings_wlan_join_post = {
+      .uri = "/settings/wlan/join", .method = HTTP_POST, .handler = settings_wlan_join_post_handler};
   httpd_uri_t settings_wg_upload_post = {
       .uri = "/settings/wireguard/upload", .method = HTTP_POST, .handler = settings_wireguard_upload_post_handler};
   httpd_uri_t settings_wg_delete_post = {
@@ -1471,11 +1620,13 @@ void web_server_manager_init(void) {
   httpd_register_uri_handler(s_server, &login_post);
   httpd_register_uri_handler(s_server, &logout_get);
   httpd_register_uri_handler(s_server, &root_get);
+  httpd_register_uri_handler(s_server, &console_get);
   httpd_register_uri_handler(s_server, &account_ssh_key_post);
   httpd_register_uri_handler(s_server, &account_notify_post);
   httpd_register_uri_handler(s_server, &api_graph_get);
   httpd_register_uri_handler(s_server, &settings_get);
   httpd_register_uri_handler(s_server, &settings_network_post);
+  httpd_register_uri_handler(s_server, &settings_wlan_join_post);
   httpd_register_uri_handler(s_server, &settings_wg_upload_post);
   httpd_register_uri_handler(s_server, &settings_ota_upload_post);
   httpd_register_uri_handler(s_server, &settings_wg_delete_post);

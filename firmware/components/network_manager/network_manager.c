@@ -8,6 +8,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -17,6 +18,37 @@
 
 static const char* TAG = "network_manager";
 #define WLAN_CONFIG_FILE "/storage/wlan.json"
+
+// Bewaehrtes Reconnect-/Fallback-AP-Muster aus sensormeter-wlan
+// (NetworkManager.cpp) - siehe network_manager_tick() fuer die Details.
+// Zeitkonstanten 1:1 von dort uebernommen.
+#define NETWORK_TICK_INTERVAL_US (5ULL * 1000ULL * 1000ULL)
+#define RECONNECT_RETRY_INTERVAL_US (20ULL * 1000ULL * 1000ULL)
+#define WLAN_CHECK_TIMEOUT_US (5ULL * 60ULL * 1000000ULL)
+
+// ACHTUNG (2026-07-23): weicht bewusst von der urspruenglichen Entscheidung
+// "Kein AP-Fallback-Abschnitt" in docs/entscheidungen.md ab (dort begruendet
+// mit der USB-Ersteinrichtung ueber tools/Setup.ps1). Auf ausdruecklichen
+// Wunsch nachtraeglich ergaenzt, siehe dortiger Eintrag "Fallback-Access-
+// Point (Nachtrag)" fuer die Gegendarstellung - die USB-Ersteinrichtung
+// bleibt der primaere Weg, der AP ist ein zusaetzliches Sicherheitsnetz fuer
+// den Fall, dass ein einmal konfiguriertes WLAN spaeter dauerhaft
+// unerreichbar wird.
+static const char* FALLBACK_AP_SSID = "installer";
+static const char* FALLBACK_AP_PSK = "installer";
+
+typedef enum {
+  NET_STATE_WLAN_CHECK,
+  NET_STATE_FALLBACK_MODE,
+  NET_STATE_RUN_NORMAL,
+} net_state_t;
+
+static esp_timer_handle_t s_tick_timer = NULL;
+static esp_netif_t* s_ap_netif = NULL;
+static net_state_t s_state = NET_STATE_WLAN_CHECK;
+static bool s_ap_active = false;
+static int64_t s_network_check_started_us = 0;
+static int64_t s_last_reconnect_attempt_us = 0;
 
 static volatile bool s_connected = false;
 static bool s_static_ip_active = false;
@@ -71,16 +103,98 @@ static bool load_wlan_from_storage(void) {
   return ok;
 }
 
+// Schaltet auf einen eigenen Access Point um, wenn nach WLAN_CHECK_TIMEOUT_US
+// (bewaehrter Wert: 5 Minuten, sensormeter-wlan) keine STA-Verbindung
+// zustande kam - analog startFallbackAp() in sensormeter-wlan/
+// NetworkManager.cpp: kein Gateway/Routing ins Internet, eigener DHCP-Server
+// (IP/Subnetz bereits in network_manager_init() vorkonfiguriert). Ueber
+// diesen AP ist web_server_manager weiterhin unter 192.168.4.1 erreichbar -
+// dort koennen neue WLAN-Zugangsdaten eingetragen werden
+// (network_manager_join() schaltet danach zurueck auf STA).
+static void start_fallback_ap(void) {
+  esp_wifi_disconnect();  // Fehler ignoriert, falls gerade nicht verbunden
+  // APSTA statt reinem AP-Modus: das STA-Interface bleibt dadurch nutzbar,
+  // waehrend der AP laeuft - reiner WIFI_MODE_AP hat esp_wifi_scan_start()
+  // (network_manager_scan_wifi(), fuer den "Scan starten"-Knopf im
+  // Webinterface) mit ESP_ERR_WIFI_MODE scheitern lassen, da ein WLAN-Scan
+  // ein aktives STA-Interface braucht - genau ueber diesen AP verbunden
+  // wollte man ja typischerweise ein echtes Netz suchen und eintragen.
+  esp_err_t err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Fallback-Access-Point: esp_wifi_set_mode(APSTA) fehlgeschlagen: %s", esp_err_to_name(err));
+    s_ap_active = false;
+    return;
+  }
+  s_ap_active = true;
+  ESP_LOGW(TAG, "Kein WLAN erreichbar - Fallback-Access-Point \"%s\" gestartet (192.168.4.1)", FALLBACK_AP_SSID);
+}
+
+// Periodische, entkoppelte Zustandsmaschine statt Reaktion auf jedes einzelne
+// WIFI_EVENT_STA_DISCONNECTED (siehe event_handler()) - bewaehrtes Muster aus
+// sensormeter-wlan/NetworkManager.cpp::loop(). Grund fuer die Entkopplung:
+// beim ersten echten Hardware-Bring-up (2026-07-23) war noch kein WLAN
+// hochgeladen, die Firmware versuchte also dauerhaft die Kconfig-
+// Platzhalter-SSID "CHANGE_ME_SSID" zu joinen. Das schlaegt sofort fehl ->
+// DISCONNECTED-Event -> sofortiger erneuter esp_wifi_connect() -> naechstes
+// DISCONNECTED ... Dieser ungebremste Reconnect-Sturm hat den Task-Watchdog
+// auf IDLE0 ausgehungert. Siehe docs/entscheidungen.md.
+static void network_manager_tick(void* arg) {
+  (void)arg;
+  int64_t now = esp_timer_get_time();
+
+  switch (s_state) {
+    case NET_STATE_WLAN_CHECK:
+      if (s_connected) {
+        ESP_LOGI(TAG, "WLAN verbunden - Normalbetrieb");
+        s_state = NET_STATE_RUN_NORMAL;
+      } else if (now - s_network_check_started_us > WLAN_CHECK_TIMEOUT_US) {
+        start_fallback_ap();
+        s_state = NET_STATE_FALLBACK_MODE;
+      } else if (s_ssid[0] != '\0' && now - s_last_reconnect_attempt_us > RECONNECT_RETRY_INTERVAL_US) {
+        ESP_LOGW(TAG, "WLAN weg - aktiver Reconnect-Versuch");
+        esp_wifi_connect();
+        s_last_reconnect_attempt_us = now;
+      }
+      break;
+
+    case NET_STATE_FALLBACK_MODE:
+      // Regulaerer Ausstieg passiert in network_manager_join() (neue
+      // Zugangsdaten eingetragen -> zurueck auf STA). Hier nur Sicherheitsnetz,
+      // falls s_connected aus anderem Grund schon wieder true ist, und Retry,
+      // falls das Starten des APs selbst fehlgeschlagen war.
+      if (s_connected) {
+        s_ap_active = false;
+        s_state = NET_STATE_RUN_NORMAL;
+      } else if (!s_ap_active) {
+        start_fallback_ap();
+      }
+      break;
+
+    case NET_STATE_RUN_NORMAL:
+      if (!s_connected) {
+        ESP_LOGW(TAG, "WLAN-Verbindung verloren");
+        s_state = NET_STATE_WLAN_CHECK;
+        s_network_check_started_us = now;
+        s_last_reconnect_attempt_us = now;
+      }
+      break;
+  }
+}
+
 static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
   (void)arg;
   (void)event_data;
 
   if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-    esp_wifi_connect();
+    if (s_ssid[0] != '\0') esp_wifi_connect();
   } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+    // Kein sofortiger esp_wifi_connect() mehr hier - siehe network_manager_tick().
     s_connected = false;
-    ESP_LOGW(TAG, "WLAN getrennt, Reconnect-Versuch");
-    esp_wifi_connect();
+    ESP_LOGW(TAG, "WLAN getrennt");
+  } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
+    ESP_LOGI(TAG, "Client mit Fallback-Access-Point verbunden");
+  } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+    ESP_LOGI(TAG, "Client vom Fallback-Access-Point getrennt");
   } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
     s_connected = true;
     ESP_LOGI(TAG, "WLAN verbunden, IP erhalten");
@@ -99,12 +213,43 @@ void network_manager_init(void) {
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   esp_netif_create_default_wifi_sta();
+  s_ap_netif = esp_netif_create_default_wifi_ap();
 
   wifi_init_config_t wifi_init_cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&wifi_init_cfg));
 
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
   ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
+
+  // esp_wifi_set_config() prueft intern, ob das Zielinterface im aktuell
+  // gesetzten Wifi-Modus ueberhaupt enthalten ist (sonst ESP_ERR_WIFI_MODE) -
+  // deshalb hier vorab auf APSTA schalten, damit sowohl das AP- als auch das
+  // STA-Config weiter unten gueltig gesetzt werden koennen. Vor
+  // esp_wifi_start() wird der tatsaechliche Startmodus dann auf reines STA
+  // zurueckgeschaltet (siehe unten) - das bereits gesetzte AP-Config bleibt
+  // dabei erhalten, start_fallback_ap() muss es spaeter nicht erneut setzen.
+  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+
+  // Fallback-AP-Netzwerk einmalig vorkonfigurieren (192.168.4.1/24, eigener
+  // DHCP-Server, kein Gateway/Routing - analog sensormeter-wlan) - gilt
+  // dauerhaft, unabhaengig davon, ob/wann start_fallback_ap() den Modus
+  // tatsaechlich auf WIFI_MODE_AP umschaltet.
+  esp_netif_dhcps_stop(s_ap_netif);
+  esp_netif_ip_info_t ap_ip_info = {0};
+  esp_netif_str_to_ip4("192.168.4.1", &ap_ip_info.ip);
+  esp_netif_str_to_ip4("192.168.4.1", &ap_ip_info.gw);
+  esp_netif_str_to_ip4("255.255.255.0", &ap_ip_info.netmask);
+  ESP_ERROR_CHECK(esp_netif_set_ip_info(s_ap_netif, &ap_ip_info));
+  ESP_ERROR_CHECK(esp_netif_dhcps_start(s_ap_netif));
+
+  wifi_config_t ap_config = {0};
+  strncpy((char*)ap_config.ap.ssid, FALLBACK_AP_SSID, sizeof(ap_config.ap.ssid) - 1);
+  ap_config.ap.ssid_len = strlen(FALLBACK_AP_SSID);
+  strncpy((char*)ap_config.ap.password, FALLBACK_AP_PSK, sizeof(ap_config.ap.password) - 1);
+  ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+  ap_config.ap.max_connection = 4;
+  ap_config.ap.channel = 1;
+  ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
 
   if (load_wlan_from_storage()) {
     ESP_LOGI(TAG, "WLAN-Zugangsdaten von %s geladen", WLAN_CONFIG_FILE);
@@ -113,6 +258,25 @@ void network_manager_init(void) {
     // P0-Mindestumfang (siehe docs/entscheidungen.md).
     strncpy(s_ssid, CONFIG_ESP_BMC_WIFI_SSID, sizeof(s_ssid) - 1);
     strncpy(s_password, CONFIG_ESP_BMC_WIFI_PASSWORD, sizeof(s_password) - 1);
+
+    // ACHTUNG (2026-07-23, erster echter Hardware-Bring-up): der
+    // unveraenderte Kconfig-Platzhalter "CHANGE_ME_SSID" ist kein echtes
+    // Netzwerk und kann es per Definition auf keinem Testaufbau je sein -
+    // ein Verbindungsversuch dagegen (STA_START/Reconnect) loest bei
+    // fehlendem BSSID einen vollen Kanal-Scan aus, der auf echter Hardware
+    // reproduzierbar so viel CPU0-Zeit gebraucht hat, dass der Task-
+    // Watchdog auf IDLE0 ausgeloest hat (siehe docs/entscheidungen.md,
+    // Abschnitt "WLAN-Reconnect-Sturm..."). Deshalb wird der Platzhalter
+    // hier wie "kein WLAN konfiguriert" behandelt (leere SSID) statt einen
+    // von vornherein zum Scheitern verurteilten Verbindungsversuch
+    // anzustossen - die Zustandsmaschine geht dann sofort in den
+    // WLAN_CHECK-Wartezustand und nach WLAN_CHECK_TIMEOUT_US in den
+    // Fallback-Access-Point.
+    if (strcmp(s_ssid, "CHANGE_ME_SSID") == 0) {
+      ESP_LOGW(TAG, "WLAN-SSID ist noch der Kconfig-Platzhalter - kein Verbindungsversuch, warte auf Fallback-Access-Point");
+      s_ssid[0] = '\0';
+      s_password[0] = '\0';
+    }
   }
 
   wifi_config_t wifi_config = {0};
@@ -123,6 +287,18 @@ void network_manager_init(void) {
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
   ESP_ERROR_CHECK(esp_wifi_start());
+
+  int64_t now = esp_timer_get_time();
+  s_state = NET_STATE_WLAN_CHECK;
+  s_network_check_started_us = now;
+  s_last_reconnect_attempt_us = now;
+
+  const esp_timer_create_args_t tick_timer_args = {
+      .callback = &network_manager_tick,
+      .name = "network_tick",
+  };
+  ESP_ERROR_CHECK(esp_timer_create(&tick_timer_args, &s_tick_timer));
+  ESP_ERROR_CHECK(esp_timer_start_periodic(s_tick_timer, NETWORK_TICK_INTERVAL_US));
 
   ESP_LOGI(TAG, "NetworkManager gestartet (SSID: %s)", s_ssid);
 }
@@ -139,10 +315,21 @@ void network_manager_join(const char* ssid, const char* password) {
   strncpy((char*)wifi_config.sta.password, s_password, sizeof(wifi_config.sta.password) - 1);
   wifi_config.sta.threshold.authmode = s_password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
 
+  // Falls gerade der Fallback-Access-Point aktiv war (neue Zugangsdaten
+  // typischerweise ueber genau diesen AP eingetragen, siehe start_fallback_ap()):
+  // zurueck auf reinen STA-Modus, bevor der neue Verbindungsversuch startet.
+  esp_wifi_set_mode(WIFI_MODE_STA);
+  s_ap_active = false;
   esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
   s_connected = false;
   esp_wifi_disconnect();  // Fehler ignoriert, falls noch nie verbunden
   esp_wifi_connect();
+
+  int64_t now = esp_timer_get_time();
+  s_state = NET_STATE_WLAN_CHECK;
+  s_network_check_started_us = now;
+  s_last_reconnect_attempt_us = now;
+
   ESP_LOGI(TAG, "Neue WLAN-Zugangsdaten uebernommen (SSID: %s), Reconnect angestossen", s_ssid);
 }
 
@@ -157,6 +344,8 @@ void network_manager_reset(void) {
 }
 
 bool network_manager_is_connected(void) { return s_connected; }
+
+bool network_manager_is_fallback_ap_active(void) { return s_ap_active; }
 
 bool network_manager_get_ip_string(char* out_buf, size_t buf_len) {
   out_buf[0] = '\0';

@@ -54,6 +54,12 @@ static TasterKanal s_reset = {
 // direkt nach dem Boot korrekt false liefert, bevor je ein Signal anlag.
 static int64_t s_hdd_led_last_active_us = -HDD_LED_RECENT_WINDOW_US * 2;
 
+// Host-Uptime-Tracking ueber die Power-LED-Erfassung (gpio_manager_task()) -
+// s_power_led_currently_on ist der zuletzt gepollte Rohzustand,
+// s_power_led_on_since_us der Zeitstempel des letzten aus->an-Wechsels.
+static bool s_power_led_currently_on;
+static int64_t s_power_led_on_since_us;
+
 // Software-Schattenkopie der Gehaeuse-LED-Ausgaenge (Lastenheft
 // Abschnitt 5 "Gehaeuse-Power-/HDD-LED ansteuern") - aus demselben Grund
 // wie bei TasterKanal.weitergeleitet oben: gpio_get_level() auf einem
@@ -145,6 +151,16 @@ static void gpio_manager_task(void* arg) {
     if (gpio_get_level(GPIO_REMOTE_HDD_LED_IN) == 0) {  // aktiv LOW, wie gpio_manager_read_hdd_led()
       s_hdd_led_last_active_us = esp_timer_get_time();
     }
+
+    // Host-Uptime: Zeitstempel nur bei einem aus->an-Wechsel neu setzen,
+    // nicht bei jedem Poll-Zyklus - sonst wuerde die Laufzeit nie ueber ein
+    // paar Millisekunden hinauskommen.
+    bool power_led_on_now = (gpio_get_level(GPIO_REMOTE_POWER_LED_IN) == 0);  // aktiv LOW, wie gpio_manager_read_power_led()
+    if (power_led_on_now && !s_power_led_currently_on) {
+      s_power_led_on_since_us = esp_timer_get_time();
+    }
+    s_power_led_currently_on = power_led_on_now;
+
     vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_POLL_MS));
   }
 }
@@ -201,4 +217,10 @@ bool gpio_manager_trigger_reset(void) { return trigger_kanal(&s_reset, REMOTE_PR
 
 bool gpio_manager_hdd_led_active_recently(void) {
   return (esp_timer_get_time() - s_hdd_led_last_active_us) < HDD_LED_RECENT_WINDOW_US;
+}
+
+bool gpio_manager_host_uptime_seconds(int64_t* out_seconds) {
+  if (!s_power_led_currently_on) return false;
+  *out_seconds = (esp_timer_get_time() - s_power_led_on_since_us) / 1000000;
+  return true;
 }
