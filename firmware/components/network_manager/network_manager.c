@@ -24,7 +24,18 @@ static const char* TAG = "network_manager";
 // Zeitkonstanten 1:1 von dort uebernommen.
 #define NETWORK_TICK_INTERVAL_US (5ULL * 1000ULL * 1000ULL)
 #define RECONNECT_RETRY_INTERVAL_US (20ULL * 1000ULL * 1000ULL)
+// Ist ein WLAN konfiguriert, aber (voruebergehend) nicht erreichbar, wird
+// erst nach diesem laengeren Fenster in den Fallback-AP geschaltet - Zeit fuer
+// Reconnect-Versuche, bevor eine einmal funktionierende Verbindung aufgegeben
+// wird. Ist dagegen GAR KEIN WLAN konfiguriert, gibt es nichts zu verbinden -
+// dann sofort (nach WLAN_CHECK_TIMEOUT_NO_CONFIG_US) in den Installer-AP, damit
+// die Ersteinrichtung schnell moeglich ist.
 #define WLAN_CHECK_TIMEOUT_US (5ULL * 60ULL * 1000000ULL)
+#define WLAN_CHECK_TIMEOUT_NO_CONFIG_US (10ULL * 1000000ULL)
+// Periodischer Hintergrund-Scan (nur wenn nicht im Normalbetrieb verbunden),
+// damit die Netzwerkliste im Webinterface aktuell bleibt.
+#define WLAN_SCAN_INTERVAL_US (30ULL * 1000000ULL)
+#define MAX_SCAN_CACHE 16
 
 // ACHTUNG (2026-07-23): weicht bewusst von der urspruenglichen Entscheidung
 // "Kein AP-Fallback-Abschnitt" in docs/entscheidungen.md ab (dort begruendet
@@ -51,6 +62,14 @@ static int64_t s_network_check_started_us = 0;
 static int64_t s_last_reconnect_attempt_us = 0;
 
 static volatile bool s_connected = false;
+
+// Zwischengespeicherte, nach Empfangsstaerke sortierte Scan-Ergebnisse des
+// periodischen Hintergrund-Scans (siehe network_manager_tick/event_handler).
+static network_wifi_scan_result_t s_scan_cache[MAX_SCAN_CACHE];
+static int s_scan_cache_count = 0;
+static int64_t s_last_scan_us = 0;
+static bool s_scan_in_progress = false;
+
 static bool s_static_ip_active = false;
 static char s_static_ip[16] = "";
 static char s_static_netmask[16] = "";
@@ -103,6 +122,61 @@ static bool load_wlan_from_storage(void) {
   return ok;
 }
 
+// Absteigend nach Empfangsstaerke: der groessere (weniger negative) RSSI-Wert
+// ist der bessere Empfang und kommt nach oben.
+static int rssi_cmp_desc(const void* a, const void* b) {
+  const network_wifi_scan_result_t* x = (const network_wifi_scan_result_t*)a;
+  const network_wifi_scan_result_t* y = (const network_wifi_scan_result_t*)b;
+  return (int)y->rssi - (int)x->rssi;
+}
+
+// Liest die Ergebnisse eines gerade abgeschlossenen WLAN-Scans, sortiert sie
+// nach Empfangsstaerke absteigend und entfernt SSID-Duplikate (die staerkste
+// Instanz bleibt oben stehen) sowie versteckte (leere) SSIDs. Schreibt bis zu
+// max Eintraege nach out, liefert die tatsaechliche Anzahl.
+static int collect_scan_results(network_wifi_scan_result_t* out, int max) {
+  uint16_t ap_count = 0;
+  esp_wifi_scan_get_ap_num(&ap_count);
+  if (ap_count == 0) return 0;
+
+  wifi_ap_record_t* records = malloc(sizeof(wifi_ap_record_t) * ap_count);
+  if (!records) return 0;
+  if (esp_wifi_scan_get_ap_records(&ap_count, records) != ESP_OK) {
+    free(records);
+    return 0;
+  }
+
+  network_wifi_scan_result_t* all = malloc(sizeof(network_wifi_scan_result_t) * ap_count);
+  if (!all) {
+    free(records);
+    return 0;
+  }
+  for (int i = 0; i < ap_count; i++) {
+    strncpy(all[i].ssid, (const char*)records[i].ssid, sizeof(all[i].ssid) - 1);
+    all[i].ssid[sizeof(all[i].ssid) - 1] = '\0';
+    all[i].open = (records[i].authmode == WIFI_AUTH_OPEN);
+    all[i].rssi = records[i].rssi;
+  }
+  free(records);
+
+  qsort(all, ap_count, sizeof(network_wifi_scan_result_t), rssi_cmp_desc);
+
+  int n = 0;
+  for (int i = 0; i < ap_count && n < max; i++) {
+    if (all[i].ssid[0] == '\0') continue;  // versteckte SSID
+    bool dup = false;
+    for (int j = 0; j < n; j++) {
+      if (strcmp(out[j].ssid, all[i].ssid) == 0) {
+        dup = true;
+        break;
+      }
+    }
+    if (!dup) out[n++] = all[i];
+  }
+  free(all);
+  return n;
+}
+
 // Schaltet auf einen eigenen Access Point um, wenn nach WLAN_CHECK_TIMEOUT_US
 // (bewaehrter Wert: 5 Minuten, sensormeter-wlan) keine STA-Verbindung
 // zustande kam - analog startFallbackAp() in sensormeter-wlan/
@@ -147,7 +221,8 @@ static void network_manager_tick(void* arg) {
       if (s_connected) {
         ESP_LOGI(TAG, "WLAN verbunden - Normalbetrieb");
         s_state = NET_STATE_RUN_NORMAL;
-      } else if (now - s_network_check_started_us > WLAN_CHECK_TIMEOUT_US) {
+      } else if (now - s_network_check_started_us >
+                 (s_ssid[0] == '\0' ? WLAN_CHECK_TIMEOUT_NO_CONFIG_US : WLAN_CHECK_TIMEOUT_US)) {
         start_fallback_ap();
         s_state = NET_STATE_FALLBACK_MODE;
       } else if (s_ssid[0] != '\0' && now - s_last_reconnect_attempt_us > RECONNECT_RETRY_INTERVAL_US) {
@@ -179,6 +254,22 @@ static void network_manager_tick(void* arg) {
       }
       break;
   }
+
+  // Periodischer, nicht-blockierender WLAN-Scan, damit das Webinterface die
+  // verfuegbaren Netzwerke aktuell anzeigen kann (Ergebnis wird bei
+  // WIFI_EVENT_SCAN_DONE sortiert zwischengespeichert). Bewusst NUR wenn nicht
+  // verbunden UND entweder der Installer-AP laeuft oder gar kein WLAN
+  // konfiguriert ist - also genau in der Ersteinrichtungsphase. Waehrend einer
+  // aktiven STA-Verbindung wird nicht gescannt, um sie (und den daran
+  // haengenden VPN-Tunnel) nicht durch das Kanal-Hopping des Scans zu stoeren.
+  if (!s_connected && (s_ap_active || s_ssid[0] == '\0') && !s_scan_in_progress &&
+      now - s_last_scan_us > (int64_t)WLAN_SCAN_INTERVAL_US) {
+    wifi_scan_config_t cfg = {0};
+    if (esp_wifi_scan_start(&cfg, false) == ESP_OK) {  // false = asynchron
+      s_scan_in_progress = true;
+      s_last_scan_us = now;
+    }
+  }
 }
 
 static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
@@ -191,6 +282,15 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
     // Kein sofortiger esp_wifi_connect() mehr hier - siehe network_manager_tick().
     s_connected = false;
     ESP_LOGW(TAG, "WLAN getrennt");
+  } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
+    // Nur den vom periodischen Hintergrund-Scan angestossenen Lauf auswerten
+    // (der blockierende network_manager_scan_wifi() holt seine Ergebnisse
+    // selbst ab und setzt s_scan_in_progress nicht).
+    if (s_scan_in_progress) {
+      s_scan_cache_count = collect_scan_results(s_scan_cache, MAX_SCAN_CACHE);
+      s_scan_in_progress = false;
+      ESP_LOGI(TAG, "WLAN-Scan: %d Netzwerke gefunden", s_scan_cache_count);
+    }
   } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
     ESP_LOGI(TAG, "Client mit Fallback-Access-Point verbunden");
   } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
@@ -292,6 +392,10 @@ void network_manager_init(void) {
   s_state = NET_STATE_WLAN_CHECK;
   s_network_check_started_us = now;
   s_last_reconnect_attempt_us = now;
+  // So gesetzt, dass der erste periodische Scan schon beim ersten passenden
+  // Tick laeuft (statt erst nach WLAN_SCAN_INTERVAL_US), damit die
+  // Netzwerkliste in der Ersteinrichtung ohne Verzoegerung erscheint.
+  s_last_scan_us = now - (int64_t)WLAN_SCAN_INTERVAL_US;
 
   const esp_timer_create_args_t tick_timer_args = {
       .callback = &network_manager_tick,
@@ -471,29 +575,24 @@ void network_manager_get_static_config(char* out_ip, char* out_netmask, char* ou
 // ---------------------------------------------------------------------
 
 int network_manager_scan_wifi(network_wifi_scan_result_t* out, int max_results) {
+  // Laeuft gerade ein asynchroner Hintergrund-Scan, wuerde ein zweiter
+  // esp_wifi_scan_start() nur scheitern - dann direkt den Cache liefern.
+  if (s_scan_in_progress) return network_manager_get_cached_scan(out, max_results);
+
   wifi_scan_config_t scan_config = {0};
   if (esp_wifi_scan_start(&scan_config, true) != ESP_OK) return 0;  // blockierend
+  int n = collect_scan_results(out, max_results);
 
-  uint16_t ap_count = 0;
-  esp_wifi_scan_get_ap_num(&ap_count);
-  if (ap_count > (uint16_t)max_results) ap_count = (uint16_t)max_results;
-  if (ap_count == 0) return 0;
+  // Frisches Ergebnis zugleich in den Cache uebernehmen, damit die
+  // Webinterface-Anzeige (die den Cache liest) sofort aktuell ist.
+  s_scan_cache_count = n < MAX_SCAN_CACHE ? n : MAX_SCAN_CACHE;
+  for (int i = 0; i < s_scan_cache_count; i++) s_scan_cache[i] = out[i];
+  s_last_scan_us = esp_timer_get_time();
+  return n;
+}
 
-  wifi_ap_record_t* records = malloc(sizeof(wifi_ap_record_t) * ap_count);
-  if (!records) return 0;
-
-  esp_err_t err = esp_wifi_scan_get_ap_records(&ap_count, records);
-  if (err != ESP_OK) {
-    free(records);
-    return 0;
-  }
-
-  for (int i = 0; i < ap_count; i++) {
-    strncpy(out[i].ssid, (const char*)records[i].ssid, sizeof(out[i].ssid) - 1);
-    out[i].ssid[sizeof(out[i].ssid) - 1] = '\0';
-    out[i].open = (records[i].authmode == WIFI_AUTH_OPEN);
-    out[i].rssi = records[i].rssi;
-  }
-  free(records);
-  return ap_count;
+int network_manager_get_cached_scan(network_wifi_scan_result_t* out, int max_results) {
+  int n = s_scan_cache_count < max_results ? s_scan_cache_count : max_results;
+  for (int i = 0; i < n; i++) out[i] = s_scan_cache[i];
+  return n;
 }

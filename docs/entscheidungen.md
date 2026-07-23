@@ -2729,3 +2729,51 @@ Public-Key): tester"). Flash-Zuwachs ~62 KB (62,3% -> 65,3%) durch die
 ed25519-Sign/Verify-/Streaming-Codepfade; weiterhin ~35% frei. Der irrefuehrend
 auf "kein Ed25519" korrigierte Platzhalter im SSH-Key-Feld wurde wieder auf
 "ssh-ed25519 ... oder ecdsa-... (kein RSA)" gesetzt.
+
+## 2026-07-24 — Installer-AP nach 10s (ohne WLAN-Config) + periodischer WLAN-Scan mit sortierter Anzeige
+
+Auf Nutzerwunsch zwei Aenderungen am network_manager fuer eine fluessigere
+Ersteinrichtung:
+
+**Installer-AP-Timing nach vorhandener Konfiguration differenziert.** Bisher
+wurde immer erst nach WLAN_CHECK_TIMEOUT_US (5 min) in den Fallback-/Installer-
+AP geschaltet. Jetzt: ist GAR KEIN WLAN konfiguriert (leere SSID - auch der
+Fall des unveraenderten Kconfig-Platzhalters "CHANGE_ME_SSID", der wie
+"keine Config" behandelt wird), startet der AP schon nach 10s
+(WLAN_CHECK_TIMEOUT_NO_CONFIG_US) - es gibt ja nichts zu verbinden, also soll
+die Einrichtung schnell moeglich sein. Ist ein WLAN konfiguriert, aber gerade
+nicht erreichbar, bleibt es beim laengeren 5-min-Fenster (Zeit fuer Reconnect-
+Versuche, bevor eine einmal funktionierende Verbindung zugunsten des APs
+aufgegeben wird). Umgesetzt als ternaere Timeout-Wahl im WLAN_CHECK-Zweig von
+network_manager_tick().
+
+**Periodischer Hintergrund-WLAN-Scan (alle 30s) mit sortierter, gecachter
+Anzeige.** Bisher gab es nur einen blockierenden On-Demand-Scan (Web-Button
+"?scan=1" / USB "wlan scan"), unsortiert, ohne Zwischenspeicher. Neu: ein
+nicht-blockierender (asynchroner) Scan wird alle WLAN_SCAN_INTERVAL_US (30s)
+aus network_manager_tick() angestossen, das Ergebnis bei WIFI_EVENT_SCAN_DONE
+im event_handler abgeholt, nach Empfangsstaerke ABSTEIGEND sortiert (bester
+Empfang oben), SSID-dedupliziert (staerkste Instanz bleibt) und in
+s_scan_cache[16] zwischengespeichert. Das Webinterface zeigt diese Liste jetzt
+standardmaessig an (network_manager_get_cached_scan()), der "Jetzt scannen"-
+Knopf erzwingt weiterhin einen sofortigen blockierenden Scan (der den Cache
+gleich mit aktualisiert). Sortierung/Dedup steckt in der gemeinsamen Hilfs-
+funktion collect_scan_results(), die beide Pfade nutzen.
+
+**Bewusste Einschraenkung:** der periodische Scan laeuft NUR, wenn das Geraet
+nicht im Normalbetrieb verbunden ist (Bedingung: !s_connected && (AP aktiv ||
+keine SSID)) - also genau in der Ersteinrichtungsphase. Waehrend einer aktiven
+STA-Verbindung wird bewusst nicht gescannt, weil das Kanal-Hopping eines Scans
+die Verbindung (und den daran haengenden VPN-Tunnel) kurz stoert - genau das
+haben wir bei der WLAN-Stabilisierung vermieden. Wer die verfuegbaren Netze im
+Normalbetrieb sehen will, nutzt den "Jetzt scannen"-Knopf (einmaliger
+blockierender Scan). Falls doch ein Dauer-Scan im Normalbetrieb gewuenscht
+ist, muesste die Bedingung gelockert werden.
+
+Verifiziert (nicht-destruktiv, da die gespeicherte WLAN-Config nicht geloescht
+werden sollte -> Aussperr-Risiko): Normalbetrieb nach dem Flash intakt
+(verbunden, vpnUp=1); der "?scan=1"-Pfad liefert im Webinterface eine korrekt
+absteigend sortierte, deduplizierte Liste (verifiziert: -51 > -58 > -59 ...
+> -93 dBm). Das 10s-AP-Timing und der periodische Scan im AP-Modus sind code-
+verifiziert; ein vollstaendiger Live-Test im AP-Modus wurde ausgelassen, um die
+Config (deren PSK hier nicht vorliegt) nicht zu verlieren.

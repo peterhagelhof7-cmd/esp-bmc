@@ -582,20 +582,28 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
   const char* power_led_checked = gpio_manager_power_led_out_state() ? "checked" : "";
   const char* hdd_led_checked = gpio_manager_hdd_led_out_state() ? "checked" : "";
 
-  // Optionaler WLAN-Scan ueber "?scan=1" - kein JavaScript/AJAX in dieser
-  // Ausbaustufe, ein einfacher Seiten-Reload reicht.
-  char scan_html[1024] = "";
-  char query[16];
-  if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK && strstr(query, "scan=1")) {
-    network_wifi_scan_result_t results[10];
-    int n = network_manager_scan_wifi(results, 10);
+  // WLAN-Scan: standardmaessig werden die vom periodischen Hintergrund-Scan
+  // (alle 30s, waehrend der Ersteinrichtung) gefundenen Netzwerke angezeigt -
+  // bester Empfang oben (nach RSSI absteigend sortiert, in network_manager).
+  // "?scan=1" erzwingt zusaetzlich einen sofortigen (blockierenden) Scan.
+  char scan_html[2048] = "";
+  {
+    network_wifi_scan_result_t results[16];
+    char query[16];
+    bool force =
+        (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK && strstr(query, "scan=1"));
+    int n = force ? network_manager_scan_wifi(results, 16) : network_manager_get_cached_scan(results, 16);
     size_t off = 0;
-    off += snprintf(scan_html + off, sizeof(scan_html) - off, "<ul>");
-    for (int i = 0; i < n && off < sizeof(scan_html) - 100; i++) {
-      off += snprintf(scan_html + off, sizeof(scan_html) - off, "<li>%s %s (%d dBm)</li>", results[i].ssid,
-                       results[i].open ? "(offen, kein Passwort)" : "&#128274;", results[i].rssi);
+    if (n == 0) {
+      off += snprintf(scan_html + off, sizeof(scan_html) - off, "<p>Noch keine Netzwerke gefunden.</p>");
+    } else {
+      off += snprintf(scan_html + off, sizeof(scan_html) - off, "<ul>");
+      for (int i = 0; i < n && off < sizeof(scan_html) - 120; i++) {
+        off += snprintf(scan_html + off, sizeof(scan_html) - off, "<li>%s %s (%d dBm)</li>", results[i].ssid,
+                         results[i].open ? "(offen, kein Passwort)" : "&#128274;", results[i].rssi);
+      }
+      off += snprintf(scan_html + off, sizeof(scan_html) - off, "</ul>");
     }
-    off += snprintf(scan_html + off, sizeof(scan_html) - off, "</ul>");
   }
 
   // Benutzerliste (mit Loeschen-Knopf je Konto; das eigene Konto laesst sich
@@ -698,7 +706,9 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       "</form></div>"
 
       "<div class=\"card\"><h2>WLAN-Scan</h2>"
-      "<a href=\"/settings?scan=1\"><button type=\"button\">Scan starten</button></a>"
+      "<p>Verfuegbare Netzwerke (bester Empfang oben, in der Einrichtungsphase alle 30s "
+      "automatisch aktualisiert). &bdquo;Jetzt scannen&ldquo; erzwingt eine sofortige Suche.</p>"
+      "<a href=\"/settings?scan=1\"><button type=\"button\">Jetzt scannen</button></a>"
       "%s"
       "<form method=\"post\" action=\"/settings/wlan/join\">"
       "<label>SSID (aus der Liste oben abschreiben)</label><input type=\"text\" name=\"ssid\" required>"

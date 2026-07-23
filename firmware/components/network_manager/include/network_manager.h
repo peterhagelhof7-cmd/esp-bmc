@@ -76,6 +76,13 @@ typedef struct {
   int8_t rssi;
 } network_wifi_scan_result_t;
 
-// Blockierender Scan (dauert typischerweise 1-3s). Schreibt bis zu
-// max_results Eintraege nach out, liefert die tatsaechliche Anzahl.
+// Blockierender Scan (dauert typischerweise 1-3s), Ergebnis nach
+// Empfangsstaerke absteigend sortiert und SSID-dedupliziert. Schreibt bis zu
+// max_results Eintraege nach out, liefert die tatsaechliche Anzahl. Aktualisiert
+// zugleich den Cache (siehe network_manager_get_cached_scan).
 int network_manager_scan_wifi(network_wifi_scan_result_t* out, int max_results);
+
+// Liefert die zuletzt vom periodischen Hintergrund-Scan (alle 30s, waehrend der
+// Ersteinrichtung) gefundenen Netzwerke - bereits nach Empfangsstaerke
+// absteigend sortiert und dedupliziert, ohne selbst einen Scan auszuloesen.
+int network_manager_get_cached_scan(network_wifi_scan_result_t* out, int max_results);
