@@ -9,6 +9,6 @@ idf_component_register(
   # sichtbar. Pfad hier deshalb explizit ergaenzt.
   PRIV_INCLUDE_DIRS "../../.pio/libdeps/esp32-s3-devkitc-1-n16r8/esp_wireguard/include"
                      "../../.pio/libdeps/esp32-s3-devkitc-1-n16r8/esp_wireguard/src"
-  REQUIRES lwip storage_manager espressif__cjson
+  REQUIRES lwip storage_manager espressif__cjson audit_log
 )
 

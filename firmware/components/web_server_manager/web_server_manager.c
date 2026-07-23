@@ -471,38 +471,60 @@ static esp_err_t api_graph_get_handler(httpd_req_t* req) {
     return ESP_OK;
   }
 
-  sensor_history_entry_t entries[24];
-  size_t n = sensor_history_get_entries(entries, 24);
+  // Bis zu 288 Eintraege (24h @ 5min) - fuer Puffer + Kopie den Heap
+  // (PSRAM-gedeckt) statt des httpd-Worker-Stacks nutzen, sonst waere der
+  // Stack zu knapp (entries ~9KB + body ~12KB).
+  const size_t cap = SENSOR_HISTORY_SLOTS;
+  sensor_history_entry_t* entries = malloc(cap * sizeof(sensor_history_entry_t));
+  size_t body_len = 12288;
+  char* body = malloc(body_len);
+  if (!entries || !body) {
+    free(entries);
+    free(body);
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_send(req, "", 0);
+    return ESP_OK;
+  }
+  size_t n = sensor_history_get_entries(entries, cap);
   int64_t now = esp_timer_get_time();
+  time_t wall_now = time(NULL);
 
-  char body[2048];
-  size_t off = snprintf(body, sizeof(body), "{\"labels\":[");
-  for (size_t i = 0; i < n && off < sizeof(body) - 32; i++) {
-    long hours_ago = (long)((now - entries[i].recorded_at_us) / 3600000000LL);
-    off += snprintf(body + off, sizeof(body) - off, "%s\"-%ldh\"", i == 0 ? "" : ",", hours_ago);
+  size_t off = snprintf(body, body_len, "{\"labels\":[");
+  for (size_t i = 0; i < n && off < body_len - 32; i++) {
+    // Absolute Uhrzeit je Messpunkt aus der Wall-Clock rueckgerechnet
+    // (Uptime-Differenz), Format HH:MM. Ohne NTP-Sync noch relativ zu 1970,
+    // stoert den Kurvenverlauf aber nicht.
+    time_t ts = wall_now - (time_t)((now - entries[i].recorded_at_us) / 1000000LL);
+    struct tm tmv;
+    localtime_r(&ts, &tmv);
+    char lbl[8];
+    strftime(lbl, sizeof(lbl), "%H:%M", &tmv);
+    off += snprintf(body + off, body_len - off, "%s\"%s\"", i == 0 ? "" : ",", lbl);
   }
-  off += snprintf(body + off, sizeof(body) - off, "],\"ntc_temp\":[");
-  for (size_t i = 0; i < n && off < sizeof(body) - 32; i++) {
+  off += snprintf(body + off, body_len - off, "],\"ntc_temp\":[");
+  for (size_t i = 0; i < n && off < body_len - 32; i++) {
     off += entries[i].ntc_valid
-               ? snprintf(body + off, sizeof(body) - off, "%s%.1f", i == 0 ? "" : ",", entries[i].ntc_temp_c)
-               : snprintf(body + off, sizeof(body) - off, "%snull", i == 0 ? "" : ",");
+               ? snprintf(body + off, body_len - off, "%s%.1f", i == 0 ? "" : ",", entries[i].ntc_temp_c)
+               : snprintf(body + off, body_len - off, "%snull", i == 0 ? "" : ",");
   }
-  off += snprintf(body + off, sizeof(body) - off, "],\"dht_temp\":[");
-  for (size_t i = 0; i < n && off < sizeof(body) - 32; i++) {
+  off += snprintf(body + off, body_len - off, "],\"dht_temp\":[");
+  for (size_t i = 0; i < n && off < body_len - 32; i++) {
     off += entries[i].dht_valid
-               ? snprintf(body + off, sizeof(body) - off, "%s%.1f", i == 0 ? "" : ",", entries[i].dht_temp_c)
-               : snprintf(body + off, sizeof(body) - off, "%snull", i == 0 ? "" : ",");
+               ? snprintf(body + off, body_len - off, "%s%.1f", i == 0 ? "" : ",", entries[i].dht_temp_c)
+               : snprintf(body + off, body_len - off, "%snull", i == 0 ? "" : ",");
   }
-  off += snprintf(body + off, sizeof(body) - off, "],\"dht_humidity\":[");
-  for (size_t i = 0; i < n && off < sizeof(body) - 32; i++) {
+  off += snprintf(body + off, body_len - off, "],\"dht_humidity\":[");
+  for (size_t i = 0; i < n && off < body_len - 32; i++) {
     off += entries[i].dht_valid
-               ? snprintf(body + off, sizeof(body) - off, "%s%.1f", i == 0 ? "" : ",", entries[i].dht_humidity_pct)
-               : snprintf(body + off, sizeof(body) - off, "%snull", i == 0 ? "" : ",");
+               ? snprintf(body + off, body_len - off, "%s%.1f", i == 0 ? "" : ",", entries[i].dht_humidity_pct)
+               : snprintf(body + off, body_len - off, "%snull", i == 0 ? "" : ",");
   }
-  snprintf(body + off, sizeof(body) - off, "]}");
+  snprintf(body + off, body_len - off, "]}");
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
+  free(entries);
+  free(body);
   return ESP_OK;
 }
 
@@ -520,6 +542,24 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
   bool wg_uploaded = wireguard_manager_has_uploaded_config();
   char wg_local_ip[16];
   wireguard_manager_get_local_address(wg_local_ip, sizeof(wg_local_ip));
+  char wg_endpoint[80];
+  wireguard_manager_get_endpoint(wg_endpoint, sizeof(wg_endpoint));
+  char wg_pubkey[64];
+  wireguard_manager_get_public_key(wg_pubkey, sizeof(wg_pubkey));
+  char wg_allowed[128];
+  wireguard_manager_get_allowed_ips(wg_allowed, sizeof(wg_allowed));
+  bool wg_up = wireguard_manager_is_up();
+  char wg_details[512];
+  bool wg_has_ep = (wg_endpoint[0] != ':' && wg_endpoint[0] != '\0');
+  snprintf(wg_details, sizeof(wg_details),
+           "<p>Status: <b>%s</b> &middot; Tunnel: <b>%s</b></p>"
+           "<p>Endpoint (Peer): %s</p>"
+           "<p>Tunnel-IP (lokal): %s</p>"
+           "<p>Peer-PublicKey: <code style=\"word-break:break-all\">%s</code></p>"
+           "<p>AllowedIPs: %s</p>",
+           wg_uploaded ? "hochgeladen" : "Kconfig-Platzhalter", wg_up ? "aktiv" : "inaktiv",
+           wg_has_ep ? wg_endpoint : "-", wg_local_ip[0] ? wg_local_ip : "-", wg_pubkey[0] ? wg_pubkey : "-",
+           wg_allowed[0] ? wg_allowed : "-");
 
   char snmp_community[32];
   snmp_manager_get_community(snmp_community, sizeof(snmp_community));
@@ -656,9 +696,9 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       "</div>"
 
       "<div class=\"card\"><h2>WireGuard-VPN</h2>"
-      "<p>Konfiguration: %s &middot; Tunnel-IP: %s</p>"
+      "%s"
       "<form method=\"post\" action=\"/settings/wireguard/upload\">"
-      "<label>wireguard.conf einfuegen</label>"
+      "<label>wireguard.conf einfuegen (ersetzt die aktuelle Konfiguration)</label>"
       "<textarea name=\"conf\" rows=\"8\" placeholder=\"[Interface]&#10;PrivateKey = ...&#10;Address = "
       "10.0.0.2/24&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = beispiel.de:51820&#10;AllowedIPs = "
       "0.0.0.0/0\"></textarea>"
@@ -768,7 +808,7 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       "</body></html>",
       username, role_name(role), ip, is_static ? "statisch" : "DHCP", is_static ? "" : " selected",
       is_static ? " selected" : "", cur_ip, cur_mask, cur_gw, scan_html,
-      wg_uploaded ? "hochgeladen" : "Kconfig-Platzhalter", wg_local_ip, users_html, snmp_community,
+      wg_details, users_html, snmp_community,
       snmp_rw_community, syslog_server, (unsigned)syslog_port, smtp_server, (unsigned)smtp_port, smtp_sender,
       smtp_username, taster_pw_html, taster_pw_html, taster_pw_html, tastschutz_checked, power_led_checked,
       hdd_led_checked, ota_card, device_type, ota_manager_get_version(), device_name);
@@ -1372,7 +1412,7 @@ static esp_err_t logs_get_handler(httpd_req_t* req) {
            "</style></head><body>"
            "<h1>ESP-BMC &mdash; Logs</h1>"
            "<p>Angemeldet als <b>%s</b> (%s) &middot; <a href=\"/\">Zur Uebersicht</a></p>"
-           "<div class=\"card\"><h2>Sensorwerte (24h, stuendlich)</h2>"
+           "<div class=\"card\"><h2>Sensorwerte (24h, alle 5 min)</h2>"
            "<p><a href=\"/logs/sensors.csv\">Als CSV herunterladen</a></p></div>"
            "%s"
            "</body></html>",
@@ -1392,12 +1432,20 @@ static esp_err_t logs_sensors_csv_handler(httpd_req_t* req) {
   user_role_t role;
   if (!require_role(req, USER_ROLE_LESER, username, &role)) return ESP_OK;
 
-  char csv[2048];
-  size_t len = sensor_history_get_csv(csv, sizeof(csv));
+  // Bis zu 288 Zeilen (24h @ 5min) - Heap statt Stack, siehe api_graph_get_handler.
+  size_t csv_len = 16384;
+  char* csv = malloc(csv_len);
+  if (!csv) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_send(req, "", 0);
+    return ESP_OK;
+  }
+  size_t len = sensor_history_get_csv(csv, csv_len);
 
   httpd_resp_set_type(req, "text/csv");
   httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"sensor-history-24h.csv\"");
   httpd_resp_send(req, csv, len);
+  free(csv);
   return ESP_OK;
 }
 

@@ -2587,3 +2587,55 @@ bewusst noch nicht in dieser Sitzung umgestellt, um die WG-Fixes isoliert zu
 verifizieren. NTC-Verdrahtung (Vadc=0, fehlender Vorwiderstand) weiterhin
 offen (Hardware). Alle Firmware-Aenderungen auf n16r8 gebaut und auf die
 echte Hardware geflasht; n8r8-Paritaetsbuild noch ausstehend.
+
+## 2026-07-23, Fortsetzung — VPN-Audit, WG-Config auf Settings, Sensor-Graph 5min/24h, WDT-Panic wieder scharf
+
+Nutzerwuensche nach dem WireGuard-Bring-up, alle auf echter Hardware
+verifiziert (Login admin/admin, SNMP-Gegenpruefung):
+
+**VPN-Ereignisse ins Audit-Log.** `wireguard_manager` band `audit_log` bisher
+gar nicht ein. Ergaenzt: Upload ("VPN-Konfiguration hochgeladen (Endpoint
+...)") und Loeschen ("VPN-Konfiguration geloescht") loggen direkt in
+apply/delete. Fuer Auf-/Abbau des Tunnels ein neuer Monitor-Task
+(`wg_monitor`, 15s-Takt, Prio 1, 3072 Byte): erkennt is_up()-Flanken und
+loggt "VPN-Tunnel aufgebaut (Peer host:port)" bzw. "VPN-Tunnel getrennt".
+Bewusst ein eigener Task statt esp_timer, weil `audit_log_add()` in den
+Flash-Storage schreibt (gehoert nicht in einen Timer-Callback mit knappem
+Stack). Gestartet in main.c nach dem Connect-Gate. Verifiziert: nach Boot
+steht "VPN-Tunnel aufgebaut (Peer gate.sps-cloud.de:51820)" mit echter
+Uhrzeit im Audit-Log. CMakeLists: `audit_log` zu REQUIRES.
+
+**Aktuelle WireGuard-Konfiguration auf der Einstellungsseite.** Die WG-Karte
+zeigte nur "Konfiguration: hochgeladen/Platzhalter + Tunnel-IP". Jetzt ein
+Detailblock: Status, Tunnel aktiv/inaktiv (is_up), Endpoint (Peer),
+Tunnel-IP (lokal), Peer-PublicKey, AllowedIPs. Neue Getter
+`wireguard_manager_get_public_key()` und `_get_allowed_ips()` (Letzterer
+rechnet die gespeicherte Netzmaske zurueck in eine Prefixlaenge). Der
+**PrivateKey wird bewusst NIE ausgegeben** (kein Getter dafuer). Das
+Upload-Textfeld zum Anpassen bleibt darunter. Verifiziert: zeigt
+gate.sps-cloud.de:51820 / 10.2.2.67 / Peer-Key / 10.22.20.0/22.
+
+**Sensor-Graph war leer / kein DHT geloggt - Ursache und Fix.** Der DHT wird
+einwandfrei gelesen (Serial: 27C/30%RH). `sensor_history` schrieb aber nur
+1 Wert pro STUNDE, RAM-only, und wird bei jedem Reboot geleert - waehrend des
+WG-Debuggings wurde zig Mal rebootet, daher max. 1 Punkt, ein Linienchart
+wirkt damit leer. Auf Nutzerwunsch auf **alle 5 Minuten, 288 Slots (24h)**
+umgestellt (SENSOR_HISTORY_SLOTS in den Header gezogen, RECORD_INTERVAL_US =
+5min). RAM-only bleibt bewusst (Flash-Verschleiss). Folgeaenderungen: die
+JSON-/CSV-Puffer in `web_server_manager` (api_graph, logs/sensors.csv) waren
+mit 2048 Byte zu klein fuer 288 Eintraege - jetzt aus dem Heap (PSRAM-gedeckt,
+12K bzw. 16K) statt vom httpd-Worker-Stack alloziert (entries ~9K + body ~12K
+haetten den 24576-Stack gesprengt). Chart-Beschriftung von "-Nh" auf echte
+Uhrzeit HH:MM umgestellt (aus der Wall-Clock je Messpunkt rueckgerechnet).
+RAM real 19,6% -> 22,2% (der groessere Ringpuffer). Verifiziert: /api/graph
+liefert direkt nach Boot einen Punkt mit dht_temp=27.0, dht_humidity=30.3,
+ntc=null (korrekt, NTC-Verdrahtungsluecke).
+
+**Task-Watchdog-Panic wieder aktiv.** Da die IDLE0-Starvation root-caused und
+behoben ist (vTaskDelay(0), siehe vorheriger Eintrag) und der Dauerbetrieb
+inkl. WireGuard-Tunnel sauber lief, `CONFIG_ESP_TASK_WDT_PANIC` zurueck auf
+`y` - echte Selbstheilung (Reboot bei haengender Task) statt nur Logging.
+Verifiziert: Geraet laeuft mit scharfem Panic stabil weit ueber die alte
+~6s-Panic-Schwelle hinaus, Tunnel bleibt oben.
+
+Offen weiterhin: NTC-Vorwiderstand (Hardware), n8r8-Paritaetsbuild.

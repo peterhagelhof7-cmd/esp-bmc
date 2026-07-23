@@ -5,10 +5,11 @@
 #include <stdint.h>
 
 // SensorHistory (webconfig.txt "Seite Logs": "Download der Sensorwerten
-// (24h)") - Ringpuffer mit stuendlichen Werten. Bewusst RAM-only (nicht
-// auf der storage-Partition persistiert): 24 kleine Eintraege, ein
-// Reset beim Neustart ist fuer diesen Anwendungsfall hinnehmbar und
-// spart wiederkehrenden Flash-Verschleiss durch stuendliche Schreibzugriffe.
+// (24h)") - Ringpuffer mit Werten alle 5 Minuten (288 Slots = 24h).
+// Bewusst RAM-only (nicht auf der storage-Partition persistiert): ein
+// Reset beim Neustart ist fuer diesen Anwendungsfall hinnehmbar und spart
+// wiederkehrenden Flash-Verschleiss durch regelmaessige Schreibzugriffe.
+#define SENSOR_HISTORY_SLOTS 288
 
 typedef struct {
   bool ntc_valid;

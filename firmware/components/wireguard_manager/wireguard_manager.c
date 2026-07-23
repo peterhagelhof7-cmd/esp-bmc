@@ -8,6 +8,10 @@
 #include "cJSON.h"
 #include "esp_log.h"
 #include "esp_wireguard.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#include "audit_log.h"
 
 static const char* TAG = "wireguard_manager";
 #define WG_CONFIG_FILE "/storage/wireguard.json"
@@ -341,6 +345,10 @@ esp_err_t wireguard_manager_apply_uploaded_config(const char* conf_text) {
   save_config_to_storage();
   s_has_uploaded_config = true;
 
+  char ev[128];
+  snprintf(ev, sizeof(ev), "VPN-Konfiguration hochgeladen (Endpoint %s:%d)", s_endpoint_host, s_endpoint_port);
+  audit_log_add(ev);
+
   esp_err_t err = build_and_init();
   if (err != ESP_OK) return err;
   return wireguard_manager_connect();
@@ -352,6 +360,7 @@ esp_err_t wireguard_manager_delete_config(void) {
   s_has_uploaded_config = false;
   s_extra_allowed_count = 0;
   ESP_LOGI(TAG, "Gespeicherte WireGuard-Konfiguration geloescht");
+  audit_log_add("VPN-Konfiguration geloescht");
   return ESP_OK;
 }
 
@@ -371,4 +380,56 @@ void wireguard_manager_get_local_address(char* out, size_t out_len) {
 
 void wireguard_manager_get_endpoint(char* out, size_t out_len) {
   snprintf(out, out_len, "%s:%d", s_endpoint_host, s_endpoint_port);
+}
+
+void wireguard_manager_get_public_key(char* out, size_t out_len) {
+  strncpy(out, s_public_key, out_len - 1);
+  out[out_len - 1] = '\0';
+}
+
+void wireguard_manager_get_allowed_ips(char* out, size_t out_len) {
+  out[0] = '\0';
+  size_t off = 0;
+  for (int i = 0; i < s_extra_allowed_count && off < out_len; i++) {
+    // ip/mask -> ip/prefix (Praefixlaenge aus der Netzmaske zaehlen)
+    uint32_t m = 0;
+    unsigned a, b, c, d;
+    if (sscanf(s_extra_allowed[i].mask, "%u.%u.%u.%u", &a, &b, &c, &d) == 4) {
+      m = (a << 24) | (b << 16) | (c << 8) | d;
+    }
+    int prefix = 0;
+    while (m & 0x80000000u) { prefix++; m <<= 1; }
+    off += snprintf(out + off, out_len - off, "%s%s/%d", i == 0 ? "" : ", ", s_extra_allowed[i].ip, prefix);
+  }
+}
+
+// --- Periodische VPN-Zustandsueberwachung (Audit-Log) ---
+static TaskHandle_t s_monitor_task = NULL;
+static bool s_monitor_last_up = false;
+
+static void wg_monitor_task(void* arg) {
+  (void)arg;
+  for (;;) {
+    bool up = wireguard_manager_is_up();
+    if (up != s_monitor_last_up) {
+      s_monitor_last_up = up;
+      if (up) {
+        char ev[128];
+        snprintf(ev, sizeof(ev), "VPN-Tunnel aufgebaut (Peer %s:%d)", s_endpoint_host, s_endpoint_port);
+        audit_log_add(ev);
+        ESP_LOGI(TAG, "VPN-Tunnel aufgebaut");
+      } else {
+        audit_log_add("VPN-Tunnel getrennt");
+        ESP_LOGW(TAG, "VPN-Tunnel getrennt");
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(15000));  // 15s-Takt reicht fuer Ereignis-Protokollierung
+  }
+}
+
+void wireguard_manager_start_monitor(void) {
+  if (s_monitor_task != NULL) return;  // idempotent
+  // Eigener Task (kein esp_timer): audit_log_add() schreibt in den Flash-
+  // Storage, das gehoert nicht in einen Timer-Callback mit knappem Stack.
+  xTaskCreate(wg_monitor_task, "wg_monitor", 3072, NULL, 1, &s_monitor_task);
 }

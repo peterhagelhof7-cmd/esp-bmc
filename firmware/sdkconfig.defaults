@@ -41,17 +41,17 @@ CONFIG_ESP_ENABLE_WOLFSSH=y
 # docs/entscheidungen.md "Watchdog-LED (RGB, GPIO48)".
 #
 # HINWEIS (2026-07-23): Die "IDLE0-Starvation" (IDLE0/CPU0 wird ~5,98s nach
-# dem Boot nicht mehr eingeplant, Task-Watchdog schlaegt an) ist inzwischen
-# root-ursachlich geklaert UND behoben - es war ein vTaskDelay(0) in
+# dem Boot nicht mehr eingeplant, Task-Watchdog schlaegt an) ist root-
+# ursachlich geklaert UND behoben - es war ein vTaskDelay(0) in
 # gpio_manager.c (pdMS_TO_TICKS(5) trunkiert bei 100Hz auf 0 Ticks), NICHT
 # der WLAN-Reconnect-Sturm, dem es zunaechst zugeschrieben wurde. Siehe
 # docs/entscheidungen.md "WireGuard-Tunnel echt zum Laufen gebracht ...".
-# Damit kann Panic+Reboot als echte Selbstheilung wieder auf y - steht
-# aktuell noch auf n, bis in einer eigenen Runde bestaetigt ist, dass im
-# Dauerbetrieb (inkl. WireGuard) kein weiterer Watchdog mehr anschlaegt.
+# Nach dem Fix lief der Dauerbetrieb (inkl. WireGuard-Tunnel) sauber, daher
+# ist Panic+Reboot als echte Selbstheilung wieder aktiv: haengt eine
+# ueberwachte Task, rebootet das Geraet automatisch statt nur zu loggen.
 # Die RGB-LED (watchdog_manager) blinkt unabhaengig davon als
 # Lebenszeichen-Anzeige weiter.
-CONFIG_ESP_TASK_WDT_PANIC=n
+CONFIG_ESP_TASK_WDT_PANIC=y
 
 # OtaManager - Bootloader-Rollback: bleibt eine frisch geflashte OTA-
 # Firmware kurz nach dem Start haengen/stuerzt ab (bevor

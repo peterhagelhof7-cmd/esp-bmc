@@ -55,3 +55,13 @@ bool wireguard_manager_config_available(void);
 // hochgeladene Konfiguration.
 void wireguard_manager_get_local_address(char* out, size_t out_len);
 void wireguard_manager_get_endpoint(char* out, size_t out_len);
+// Oeffentlicher Schluessel des Peers (kein Geheimnis). Der PrivateKey wird
+// bewusst NICHT nach aussen gegeben.
+void wireguard_manager_get_public_key(char* out, size_t out_len);
+// Kommagetrennte Liste der AllowedIPs (ip/prefix), ohne die per Upload
+// entfernte Default-Route. Leerer String, wenn keine gesetzt sind.
+void wireguard_manager_get_allowed_ips(char* out, size_t out_len);
+
+// Startet die periodische VPN-Zustandsueberwachung (loggt Auf-/Abbau des
+// Tunnels ins Audit-Log). Idempotent - mehrfacher Aufruf startet nur einmal.
+void wireguard_manager_start_monitor(void);

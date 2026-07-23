@@ -4,8 +4,8 @@
 
 #include "esp_timer.h"
 
-#define HISTORY_SLOTS 24
-#define HOUR_US (3600LL * 1000000LL)
+#define HISTORY_SLOTS SENSOR_HISTORY_SLOTS
+#define RECORD_INTERVAL_US (5LL * 60LL * 1000000LL)  // alle 5 Minuten ein Eintrag
 
 static sensor_history_entry_t s_history[HISTORY_SLOTS];
 static int s_count;
@@ -15,13 +15,13 @@ static int64_t s_last_record_us;
 void sensor_history_init(void) {
   s_count = 0;
   s_next_slot = 0;
-  s_last_record_us = -HOUR_US;  // erzwingt einen Eintrag beim ersten Aufruf
+  s_last_record_us = -RECORD_INTERVAL_US;  // erzwingt einen Eintrag beim ersten Aufruf
 }
 
 void sensor_history_maybe_record(bool ntc_valid, float ntc_temp_c, bool dht_valid, float dht_temp_c,
                                   float dht_humidity_pct) {
   int64_t now = esp_timer_get_time();
-  if (now - s_last_record_us < HOUR_US) return;
+  if (now - s_last_record_us < RECORD_INTERVAL_US) return;
   s_last_record_us = now;
 
   sensor_history_entry_t* e = &s_history[s_next_slot];
@@ -63,7 +63,7 @@ size_t sensor_history_get_csv(char* out, size_t out_len) {
 void sensor_history_reset(void) {
   s_count = 0;
   s_next_slot = 0;
-  s_last_record_us = -HOUR_US;
+  s_last_record_us = -RECORD_INTERVAL_US;
 }
 
 size_t sensor_history_get_entries(sensor_history_entry_t* out, size_t max_entries) {

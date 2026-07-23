@@ -115,6 +115,9 @@ void app_main(void) {
                attempt, esp_err_to_name(werr));
       vTaskDelay(pdMS_TO_TICKS(2000));
     }
+    // Protokolliert Auf-/Abbau des Tunnels ins Audit-Log (laeuft unabhaengig
+    // davon, ob der erste Connect oben schon erfolgreich war).
+    wireguard_manager_start_monitor();
   } else {
     ESP_LOGI(TAG, "WireGuard uebersprungen - keine hochgeladene Konfiguration vorhanden");
   }
