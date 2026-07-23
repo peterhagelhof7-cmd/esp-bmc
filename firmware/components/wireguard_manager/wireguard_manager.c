@@ -254,7 +254,15 @@ static bool load_config_from_storage(void) {
 }
 
 static esp_err_t build_and_init(void) {
-  wireguard_config_t wg_config = ESP_WIREGUARD_CONFIG_DEFAULT();
+  // MUSS static sein: esp_wireguard_init() speichert nur den POINTER auf
+  // diese Struct (ctx->config = config), kopiert sie nicht. Als
+  // Stack-Lokale wuerde sie nach dem Return ungueltig, und der spaetere,
+  // separate esp_wireguard_connect()-Aufruf (im Boot-Pfad mit einer
+  // vTaskDelay-Warteschleife dazwischen) laese dann aus ueberschriebenem
+  // Stack -> config->address == (null) -> netif_create schlaegt fehl, der
+  // Tunnel kommt nie hoch. Alle referenzierten Felder (s_private_key etc.)
+  // sind ohnehin bereits statisch. Siehe docs/entscheidungen.md.
+  static wireguard_config_t wg_config = ESP_WIREGUARD_CONFIG_DEFAULT();
   wg_config.private_key = s_private_key;
   wg_config.listen_port = s_listen_port;
   wg_config.public_key = s_public_key;

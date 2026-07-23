@@ -40,17 +40,17 @@ CONFIG_ESP_ENABLE_WOLFSSH=y
 # haengenden Task explizit auf Panic+Reboot umgestellt - siehe
 # docs/entscheidungen.md "Watchdog-LED (RGB, GPIO48)".
 #
-# ACHTUNG (2026-07-23): erster echter Hardware-Bring-up zeigte einen
-# reproduzierbaren, bislang nicht root-ursachlich geklaerten Absturz -
-# IDLE0 (CPU 0) wird konsistent ~5,98s nach dem Boot nicht mehr
-# rechtzeitig eingeplant und ausgeloest, unabhaengig von WLAN-Aktivitaet
-# (mit komplett deaktiviertem Verbindungsversuch reproduziert - siehe
-# docs/entscheidungen.md "Erster echter Hardware-Bring-up"). Bis die
-# eigentliche Ursache gefunden ist, auf Nutzerwunsch temporaer wieder
-# auf n zurueckgestellt: ein Timeout wird nur noch geloggt, loest aber
-# keinen Panic+Reboot mehr aus. Die RGB-LED (watchdog_manager) blinkt
-# unveraendert weiter und dient weiterhin als visuelle
-# Lebenszeichen-Anzeige, unabhaengig von dieser Kconfig-Option.
+# HINWEIS (2026-07-23): Die "IDLE0-Starvation" (IDLE0/CPU0 wird ~5,98s nach
+# dem Boot nicht mehr eingeplant, Task-Watchdog schlaegt an) ist inzwischen
+# root-ursachlich geklaert UND behoben - es war ein vTaskDelay(0) in
+# gpio_manager.c (pdMS_TO_TICKS(5) trunkiert bei 100Hz auf 0 Ticks), NICHT
+# der WLAN-Reconnect-Sturm, dem es zunaechst zugeschrieben wurde. Siehe
+# docs/entscheidungen.md "WireGuard-Tunnel echt zum Laufen gebracht ...".
+# Damit kann Panic+Reboot als echte Selbstheilung wieder auf y - steht
+# aktuell noch auf n, bis in einer eigenen Runde bestaetigt ist, dass im
+# Dauerbetrieb (inkl. WireGuard) kein weiterer Watchdog mehr anschlaegt.
+# Die RGB-LED (watchdog_manager) blinkt unabhaengig davon als
+# Lebenszeichen-Anzeige weiter.
 CONFIG_ESP_TASK_WDT_PANIC=n
 
 # OtaManager - Bootloader-Rollback: bleibt eine frisch geflashte OTA-
@@ -70,3 +70,18 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # "sm-Stack-Overflow-Lehre") - der war zwar schon grosszuegig bemessen,
 # der main-Task selbst aber nicht. Siehe docs/entscheidungen.md.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+
+# WireGuard (droscy/esp_wireguard) legt sein Netzwerk-Interface per rohem
+# lwIP netif_add() an, NICHT ueber esp_netif - netif->state zeigt dort auf
+# die wireguardif-Struktur. Ohne diese Option ist LWIP_ESP_NETIF_DATA=0,
+# und esp_netif nutzt netif->state, um jedem netif seinen esp_netif-Wrapper
+# zuzuordnen. Der globale esp_netif-Callback (esp_netif_internal_dhcpc_cb)
+# haelt das rohe WG-netif dann faelschlich fuer ein esp_netif und
+# dereferenziert dessen (NULL-)ip_info -> Guru Meditation (LoadProhibited)
+# beim Tunnelaufbau. Bridge-Support zu aktivieren schaltet
+# LWIP_ESP_NETIF_DATA=1 (siehe components/lwip/port/include/lwipopts.h),
+# wodurch esp_netif seinen Zeiger stattdessen in netif->client_data ablegt;
+# das rohe WG-netif liefert dort korrekt NULL und wird vom Callback sauber
+# uebersprungen. Der Bridge-Code selbst wird nicht genutzt. Siehe
+# docs/entscheidungen.md.
+CONFIG_ESP_NETIF_BRIDGE_EN=y

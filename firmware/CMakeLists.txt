@@ -86,3 +86,36 @@ if(EXISTS "${LED_STRIP_SPI_DEV_FILE}")
         message(STATUS "esp-bmc: led_strip led_strip_spi_dev.c esp_heap_caps.h-Patch angewendet")
     endif()
 endif()
+
+# droscy/esp_wireguard nutzt unter mbedTLS 4.x (IDF 6.0.1) in
+# src/wireguard-platform.c den PSA-Crypto-Pfad: wireguard_platform_init()
+# ruft psa_crypto_init() auf und zieht Zufallsbytes ueber
+# psa_generate_random(). Genau dieses psa_crypto_init() stuerzt auf echter
+# Hardware reproduzierbar mit LoadProhibited ab (mbedTLS-4.x/tf-psa-crypto
+# <-> esp_wireguard-Fork, siehe docs/entscheidungen.md). WireGuards
+# eigentliche Krypto (BLAKE2s/ChaCha20Poly1305 via crypto/refc/, X25519 via
+# libsodium) nutzt PSA gar nicht - PSA wird dort ausschliesslich fuer
+# Zufallsbytes gebraucht. Deshalb denselben Weg gehen wie die ESP8266-/
+# LibreTiny-Zweige derselben Datei: den ESP32-Hardware-RNG esp_fill_random()
+# nutzen (deklariert via esp_system.h, im ESP-IDF-Zweig der Datei bereits
+# eingebunden) und psa_crypto_init() ganz weglassen. Zwei chirurgische
+# Ein-Zeilen-Ersetzungen. Gleiches idempotente Muster wie die wolfssl-/
+# led_strip-Patches oben - PlatformIO holt lib_deps bei Bedarf neu und
+# wuerfe einen Hand-Patch damit um. Ueber alle Umgebungen per GLOB, da
+# .pio/libdeps/<env>/ pro PlatformIO-Umgebung getrennt existiert.
+file(GLOB WG_PLATFORM_FILES
+     "${CMAKE_CURRENT_LIST_DIR}/.pio/libdeps/*/esp_wireguard/src/wireguard-platform.c")
+foreach(WG_PLATFORM_FILE ${WG_PLATFORM_FILES})
+    file(READ "${WG_PLATFORM_FILE}" WG_PLATFORM_CONTENT)
+    string(FIND "${WG_PLATFORM_CONTENT}" "esp-bmc-no-psa" ALREADY_PATCHED)
+    if(ALREADY_PATCHED EQUAL -1)
+        string(REPLACE "psa_status_t status = psa_crypto_init();"
+               "psa_status_t status = PSA_SUCCESS; /* esp-bmc-no-psa: psa_crypto_init() umgangen, RNG via esp_fill_random */"
+               WG_PLATFORM_CONTENT "${WG_PLATFORM_CONTENT}")
+        string(REPLACE "psa_generate_random((uint8_t *) bytes, size);"
+               "esp_fill_random(bytes, size); /* esp-bmc-no-psa */"
+               WG_PLATFORM_CONTENT "${WG_PLATFORM_CONTENT}")
+        file(WRITE "${WG_PLATFORM_FILE}" "${WG_PLATFORM_CONTENT}")
+        message(STATUS "esp-bmc: esp_wireguard wireguard-platform.c PSA->esp_fill_random-Patch angewendet (${WG_PLATFORM_FILE})")
+    endif()
+endforeach()

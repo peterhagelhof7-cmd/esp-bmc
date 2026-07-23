@@ -2497,3 +2497,93 @@ Aufrufe mit lokalen Formatpuffern, siehe dortigen Kommentar
 SET liefert den gesetzten Wert korrekt zurueck, kein Absturz mehr,
 Zugriffskontrolle (SET mit der `public`/Read-only-Community wird
 weiterhin korrekt mit einem SNMP-Fehler abgelehnt) unveraendert intakt.
+
+## 2026-07-23, Fortsetzung — WireGuard-Tunnel echt zum Laufen gebracht (4 Bugs) + IDLE0-Starvation root-caused
+
+Ziel dieser Sitzung: den beim ersten Bring-up nur umgangenen WireGuard-Boot-
+Absturz an der Wurzel beheben und einen echten Tunnel gegen den realen Peer
+(`gate.sps-cloud.de`, Config `WG-SPS-CLOUD.conf`) aufbauen. Ergebnis: Tunnel
+steht (`vpnUp=1` per SNMP, lokale Tunnel-IP 10.2.2.67), Geraet stabil. Es
+kamen VIER echte Fehler nacheinander zum Vorschein - jeder hatte den
+naechsten maskiert, weil der Code-Pfad vorher immer schon abbrach.
+
+**Bug 1 - `psa_crypto_init()`-Absturz (der urspruenglich nur umgangene).**
+`esp_wireguard`/`wireguard-platform.c` ruft unter mbedTLS 4.x (IDF 6.0.1)
+`psa_crypto_init()` auf und zieht Zufallsbytes ueber `psa_generate_random()`.
+Genau dieser Aufruf stuerzte reproduzierbar ab (LoadProhibited). Erkenntnis:
+WireGuards eigentliche Krypto nutzt PSA GAR NICHT - BLAKE2s/ChaCha20Poly1305
+liegen als C-Referenz in `crypto/refc/`, X25519 kommt aus libsodium. PSA
+diente ausschliesslich der Zufallsbyte-Erzeugung. Fix: den PSA-Pfad durch den
+ESP32-Hardware-RNG `esp_fill_random()` ersetzen (genau wie die ESP8266-/
+LibreTiny-Zweige derselben Datei), `psa_crypto_init()` faellt weg. Umgesetzt
+als idempotenter CMake-Patch in `firmware/CMakeLists.txt` (GLOB ueber
+`.pio/libdeps/*/esp_wireguard/src/wireguard-platform.c`), gleiches Muster wie
+die wolfssl-/led_strip-Patches. `main.c`: WireGuard wird weiterhin nur bei
+vorhandener Konfiguration initialisiert - das ist jetzt aber kein
+Absturzschutz mehr, sondern schlicht sinnvoll.
+
+**Bug 2 - `config->address == (null)` beim Boot (Dangling-Pointer).**
+`esp_wireguard_init()` speichert nur den POINTER auf die uebergebene
+`wireguard_config_t` (`ctx->config = config`), kopiert sie nicht.
+`build_and_init()` in `wireguard_manager.c` uebergab aber eine STACK-LOKALE
+`wg_config`. Nach dem Return war deren Stack ungueltig; der spaetere,
+separate `esp_wireguard_connect()`-Aufruf (im Boot-Pfad mit einer
+`vTaskDelay`-Warteschleife dazwischen, die den Stack ueberschreibt) las dann
+`config->address` als `(null)` -> `netif_create` schlug fehl, Tunnel kam nie
+hoch. Ueber den Web-Upload-Pfad (init+connect direkt hintereinander, kein
+Delay) hatte es per Zufall funktioniert. Fix: `wg_config` `static` - alle
+referenzierten Felder (`s_private_key` etc.) sind ohnehin schon statisch.
+
+**Bug 3 - Guru Meditation in `esp_netif_internal_dhcpc_cb` (LoadProhibited,
+EXCVADDR=0).** Erst nach Fix 2 erreichte der Code erstmals `netif_add()`.
+`esp_wireguard` legt sein Interface per ROHEM lwIP-`netif_add()` an (nicht
+ueber esp_netif); `netif->state` zeigt dabei auf die wireguardif-Struktur.
+Ohne Bridge/PPP ist `LWIP_ESP_NETIF_DATA=0`, d.h. esp_netif nutzt genau
+`netif->state`, um jedem netif seinen esp_netif-Wrapper zuzuordnen. Der
+globale esp_netif-DHCP-Callback (feuert bei JEDEM netif_add) hielt das rohe
+WG-netif dann faelschlich fuer ein esp_netif und dereferenzierte dessen
+NULL-`ip_info`. Fix: `CONFIG_ESP_NETIF_BRIDGE_EN=y` in `sdkconfig.defaults`
+schaltet `LWIP_ESP_NETIF_DATA=1` (siehe
+`components/lwip/port/include/lwipopts.h` - der Kommentar dort beschreibt
+exakt diesen Fall: "special lwip interfaces" muessen den esp_netif-Zeiger in
+`netif->client_data` statt `netif->state` ablegen). Damit liefert das rohe
+WG-netif korrekt NULL und wird vom Callback sauber uebersprungen. Der
+Bridge-Code selbst wird nicht genutzt - reiner Nebeneffekt der Option.
+
+**Bug 4 - Tunnel blieb unten trotz erfolgreichem netif (async-DNS-Timing).**
+`esp_wireguard_connect()` loest den Endpoint-Hostnamen asynchron auf und gibt
+`ESP_ERR_RETRY` zurueck, solange DNS laeuft; der DNS-Callback stoesst den
+Handshake NICHT selbst an - das passiert erst beim naechsten connect()-Aufruf
+nach fertigem DNS. `main.c` rief connect() aber nur einmal. Fix: begrenzte
+Retry-Schleife (15x, 2s) im Boot-Pfad (Blockieren im app_main-Task
+unkritisch; im Web-Upload-Handler waere es das nicht, daher bewusst nur hier).
+Der netif wird beim ersten Versuch erzeugt, Folgeversuche warten nur auf die
+dann gecachte DNS-Antwort. Danach: `vpnUp=1`, ueber mehrere Minuten stabil.
+
+**Bonus - die "IDLE0-Starvation" ist root-caused (und war NICHT der
+WLAN-Sturm).** Beim Serial-Mitschnitt fiel auf, dass der Task-Watchdog nach
+wie vor alle ~5s anschlug (IDLE0 auf CPU0, `gpio_manager` als laufende Task) -
+also NICHT durch den WLAN-Reconnect-Sturm allein erklaerbar, wie weiter oben
+in diesem Log angenommen. Backtrace-Decode zeigte: `gpio_manager_task` haengt
+bei `vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_POLL_MS))` mit `DEBOUNCE_POLL_MS=5`.
+Bei `CONFIG_FREERTOS_HZ=100` ist ein Tick 10ms, also `pdMS_TO_TICKS(5)=0`, und
+`vTaskDelay(0)` blockiert NICHT, sondern yieldet nur. Da `gpio_manager`
+(Prio 1, an Core 0 gepinnt) hoehere Prio als IDLE0 (Prio 0) hat, wurde er
+sofort wieder eingeplant -> Dauerschleife, IDLE0 kam nie zum Zug, Watchdog
+schlug an. Das erklaert das "deterministisch ~5,98s nach jedem Boot"-Symptom
+vollstaendig und lag seit dem allerersten Boot vor. Fix in `gpio_manager.c`:
+`DEBOUNCE_POLL_MS 5->10` (= genau 1 Tick, blockiert echt),
+`DEBOUNCE_STABLE_CYCLES 6->3` (haelt das 30ms-Entprellfenster), plus ein
+Guard `if (poll_ticks==0) poll_ticks=1`. Nach dem Fix auf Hardware
+verifiziert: 0x Task-Watchdog in >40s Dauerbetrieb (vorher alle 5s). Nebenbei
+wird damit die in `docs/systemlast.md` geschaetzte Grundlast (<2% fuer
+gpio_manager) erstmals real zutreffend - vorher lief der Task real bei ~100%
+auf Core 0.
+
+Offen geblieben: `CONFIG_ESP_TASK_WDT_PANIC` steht weiterhin auf `n` (beim
+Bring-up als Workaround gesetzt). Da die IDLE0-Ursache jetzt gefunden UND
+behoben ist, kann/sollte Panic+Reboot als echte Selbstheilung wieder auf `y` -
+bewusst noch nicht in dieser Sitzung umgestellt, um die WG-Fixes isoliert zu
+verifizieren. NTC-Verdrahtung (Vadc=0, fehlender Vorwiderstand) weiterhin
+offen (Hardware). Alle Firmware-Aenderungen auf n16r8 gebaut und auf die
+echte Hardware geflasht; n8r8-Paritaetsbuild noch ausstehend.

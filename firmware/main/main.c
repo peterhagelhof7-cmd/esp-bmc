@@ -70,20 +70,24 @@ void app_main(void) {
   time_manager_set_sync_result_cb(on_ntp_sync_result);
   network_manager_init();
 
-  // ACHTUNG (2026-07-23, erster echter Hardware-Bring-up): entgegen dem
-  // Kommentar, der hier frueher stand ("wireguard_manager_init() ist immer
-  // sicher"), stuerzt der Aufruf auf echter Hardware reproduzierbar ab -
-  // Guru-Meditation-Error (LoadProhibited) in psa_crypto_init(), ausgeloest
-  // von esp_wireguard/wireguard-platform.c, vermutlich eine
-  // Inkompatibilitaet zwischen mbedTLS 4.x's "tf-psa-crypto"-Architektur
-  // (IDF 6.0.1) und dem esp_wireguard-Fork (siehe docs/entscheidungen.md).
-  // Bis das behoben ist: wireguard_manager_init() nur noch aufrufen, wenn
-  // WireGuard tatsaechlich gebraucht wird (hochgeladene Konfiguration
-  // vorhanden, geprueft OHNE init() vorher - siehe
-  // wireguard_manager_config_available()) oder der Kconfig-Entwicklertest
-  // explizit gewuenscht ist. CONFIG_ESP_BMC_WG_ENABLE existiert als
-  // C-Bezeichner nur, wenn der Kconfig-Bool auf "y" steht - daher der
-  // #if-Umweg statt einer direkten Laufzeitabfrage.
+  // WireGuard-Boot-Absturz (2026-07-23) an der Wurzel behoben: der Crash
+  // steckte in esp_wireguard/wireguard-platform.c's psa_crypto_init()
+  // (mbedTLS-4.x/tf-psa-crypto <-> esp_wireguard-Fork, LoadProhibited).
+  // WireGuards eigentliche Krypto (BLAKE2s/ChaCha20Poly1305 via crypto/refc/,
+  // X25519 via libsodium) nutzt PSA gar nicht - PSA diente dort nur der
+  // Zufallsbyte-Erzeugung. Deshalb wird der PSA-Pfad per idempotentem
+  // CMake-Patch (firmware/CMakeLists.txt) durch den Hardware-RNG
+  // esp_fill_random() ersetzt und psa_crypto_init() faellt weg - derselbe
+  // Weg, den die ESP8266-/LibreTiny-Zweige derselben Datei schon gehen.
+  // Siehe docs/entscheidungen.md.
+  //
+  // wireguard_manager_init() wird trotzdem nur aufgerufen, wenn WireGuard
+  // gebraucht wird (hochgeladene Konfiguration vorhanden, geprueft OHNE
+  // init() vorher - wireguard_manager_config_available()) oder der
+  // Kconfig-Entwicklertest gewuenscht ist - kein Absturzschutz mehr,
+  // sondern schlicht sinnvoll: ohne Konfiguration gibt es nichts zu tun.
+  // CONFIG_ESP_BMC_WG_ENABLE existiert als C-Bezeichner nur, wenn der
+  // Kconfig-Bool auf "y" steht - daher der #if-Umweg.
   bool wg_dev_test_requested = false;
 #if CONFIG_ESP_BMC_WG_ENABLE
   wg_dev_test_requested = true;
@@ -93,10 +97,26 @@ void app_main(void) {
     while (!network_manager_is_connected()) {
       vTaskDelay(pdMS_TO_TICKS(500));
     }
-    wireguard_manager_connect();
+    // esp_wireguard_connect() loest den Endpoint-Hostnamen asynchron auf und
+    // gibt ESP_ERR_RETRY zurueck, solange die DNS-Aufloesung noch laeuft -
+    // der DNS-Callback stoesst den Handshake NICHT selbst an, das passiert
+    // erst beim naechsten connect()-Aufruf nach fertigem DNS. Deshalb hier
+    // eine begrenzte Retry-Schleife (Blockieren im app_main-Task ist
+    // unkritisch; im Web-Upload-Handler waere es das nicht, daher nur hier).
+    // Der Netif wird beim ersten Versuch erzeugt, Folgeversuche ueberspringen
+    // das und warten nur auf die (dann gecachte) DNS-Antwort.
+    for (int attempt = 1; attempt <= 15; attempt++) {
+      esp_err_t werr = wireguard_manager_connect();
+      if (werr == ESP_OK) {
+        ESP_LOGI(TAG, "WireGuard-Tunnel aufgebaut (Versuch %d)", attempt);
+        break;
+      }
+      ESP_LOGW(TAG, "WireGuard-Connect Versuch %d: %s - erneuter Versuch in 2s",
+               attempt, esp_err_to_name(werr));
+      vTaskDelay(pdMS_TO_TICKS(2000));
+    }
   } else {
-    ESP_LOGW(TAG, "WireGuard uebersprungen (bekannter Boot-Absturz-Bug, siehe docs/entscheidungen.md) - "
-                  "keine hochgeladene Konfiguration vorhanden");
+    ESP_LOGI(TAG, "WireGuard uebersprungen - keine hochgeladene Konfiguration vorhanden");
   }
 
   ota_manager_init();

@@ -15,8 +15,16 @@ static const char* TAG = "gpio_manager";
 // Entprellung: eine Pin-Aenderung zaehlt erst nach dieser vielen
 // aufeinanderfolgenden, uebereinstimmenden Poll-Zyklen als stabil (siehe
 // docs/pflichtenheft.txt Abschnitt 9, "Entprellung im ms-Bereich").
-#define DEBOUNCE_POLL_MS 5
-#define DEBOUNCE_STABLE_CYCLES 6  // 6 * 5ms = 30ms
+// WICHTIG: Das Poll-Intervall MUSS mindestens einen FreeRTOS-Tick betragen
+// (bei CONFIG_FREERTOS_HZ=100 sind das 10 ms). Frueher stand hier 5 ms -
+// pdMS_TO_TICKS(5) trunkiert bei 100 Hz auf 0 Ticks, und vTaskDelay(0)
+// blockiert NICHT, sondern yieldet nur. Da dieser Task (Prio 1, an Core 0
+// gepinnt) hoehere Prioritaet als IDLE0 (Prio 0) hat, wurde er sofort wieder
+// eingeplant -> Dauerschleife auf Core 0, IDLE0 kam nie zum Zug und der
+// Task-Watchdog schlug alle ~5 s an (die lange gesuchte "IDLE0-Starvation").
+// Siehe docs/entscheidungen.md. Der Guard unten sichert das zusaetzlich ab.
+#define DEBOUNCE_POLL_MS 10
+#define DEBOUNCE_STABLE_CYCLES 3  // 3 * 10ms = 30ms Entprellfenster
 
 // Dauer eines per Software ausgeloesten Tastendrucks (uebliche
 // PC-Konvention: kurzer Druck = Soft-Power, langer Druck = erzwungenes
@@ -161,7 +169,12 @@ static void gpio_manager_task(void* arg) {
     }
     s_power_led_currently_on = power_led_on_now;
 
-    vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_POLL_MS));
+    // Niemals vTaskDelay(0): das yieldet nur, blockiert nicht, und wuerde
+    // IDLE0 auf Core 0 aushungern (Task-WDT). Mindestens 1 Tick erzwingen,
+    // falls DEBOUNCE_POLL_MS/CONFIG_FREERTOS_HZ je auf < 1 Tick fuehren.
+    TickType_t poll_ticks = pdMS_TO_TICKS(DEBOUNCE_POLL_MS);
+    if (poll_ticks == 0) poll_ticks = 1;
+    vTaskDelay(poll_ticks);
   }
 }
 
