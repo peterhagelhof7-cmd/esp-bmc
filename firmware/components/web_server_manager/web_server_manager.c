@@ -287,7 +287,7 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
              "(nur ECDSA/Ed25519, kein RSA).<br>Eigener Schluessel: %s"
              "<form method=\"post\" action=\"/account/ssh-key\">"
              "<textarea name=\"ssh_public_key\" rows=\"2\" "
-             "placeholder=\"ecdsa-sha2-nistp256 AAAA... oder ssh-ed25519 AAAA...\"></textarea>"
+             "placeholder=\"ecdsa-sha2-nistp256 AAAA... (nur ECDSA/nistp256-384-521, kein Ed25519/RSA)\"></textarea>"
              "<button type=\"submit\">Speichern</button>"
              "</form></div>",
              key_status);
@@ -598,15 +598,27 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
     off += snprintf(scan_html + off, sizeof(scan_html) - off, "</ul>");
   }
 
-  // Benutzerliste
-  char users_html[512] = "";
+  // Benutzerliste (mit Loeschen-Knopf je Konto; das eigene Konto laesst sich
+  // hier nicht loeschen - Aussperrschutz, serverseitig zusaetzlich geprueft).
+  char users_html[2560] = "";
   size_t uoff = 0;
   uoff += snprintf(users_html + uoff, sizeof(users_html) - uoff, "<ul>");
-  for (size_t i = 0; i < user_manager_count() && uoff < sizeof(users_html) - 80; i++) {
+  for (size_t i = 0; i < user_manager_count() && uoff < sizeof(users_html) - 260; i++) {
     char uname[32];
     user_role_t urole;
     if (user_manager_get_at(i, uname, &urole)) {
-      uoff += snprintf(users_html + uoff, sizeof(users_html) - uoff, "<li>%s (%s)</li>", uname, role_name(urole));
+      if (strcmp(uname, username) == 0) {
+        uoff += snprintf(users_html + uoff, sizeof(users_html) - uoff,
+                         "<li>%s (%s) &mdash; <i>angemeldet</i></li>", uname, role_name(urole));
+      } else {
+        uoff += snprintf(users_html + uoff, sizeof(users_html) - uoff,
+                         "<li>%s (%s) "
+                         "<form method=\"post\" action=\"/settings/users/delete\" style=\"display:inline\" "
+                         "onsubmit=\"return confirm('Benutzer %s wirklich loeschen?');\">"
+                         "<input type=\"hidden\" name=\"username\" value=\"%s\">"
+                         "<button type=\"submit\">Loeschen</button></form></li>",
+                         uname, role_name(urole), uname, uname);
+      }
     }
   }
   uoff += snprintf(users_html + uoff, sizeof(users_html) - uoff, "</ul>");
@@ -654,7 +666,7 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
              ota_manager_get_version());
   }
 
-  char page[12288];
+  char page[16384];
   snprintf(
       page, sizeof(page),
       "<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"utf-8\">"
@@ -1094,6 +1106,55 @@ static esp_err_t settings_users_post_handler(httpd_req_t* req) {
 
   bool ok = user_manager_create(new_username, new_password, (user_role_t)atoi(role_str));
   ESP_LOGI(TAG, "%s hat Benutzer \"%s\" angelegt: %s", username, new_username, ok ? "erfolgreich" : "fehlgeschlagen");
+  redirect_to(req, ok ? "/settings" : "/settings?failed=user");
+  return ESP_OK;
+}
+
+static esp_err_t settings_users_delete_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_VERWALTER, username, &role)) return ESP_OK;
+
+  char body[128] = {0};
+  size_t to_read = req->content_len < sizeof(body) - 1 ? req->content_len : sizeof(body) - 1;
+  int received = httpd_req_recv(req, body, to_read);
+  if (received <= 0) return ESP_FAIL;
+  body[received] = '\0';
+
+  char target[32];
+  parse_form_field(body, "username", target, sizeof(target));
+
+  // Aussperrschutz: eigenes Konto nicht loeschbar.
+  if (strcmp(target, username) == 0) {
+    ESP_LOGW(TAG, "%s wollte das eigene Konto loeschen - abgelehnt", username);
+    redirect_to(req, "/settings?failed=user_self");
+    return ESP_OK;
+  }
+
+  // Aussperrschutz: den letzten verbleibenden Admin nicht loeschen.
+  size_t admin_count = 0;
+  bool target_is_admin = false;
+  for (size_t i = 0; i < user_manager_count(); i++) {
+    char uname[32];
+    user_role_t urole;
+    if (user_manager_get_at(i, uname, &urole) && urole == USER_ROLE_ADMIN) {
+      admin_count++;
+      if (strcmp(uname, target) == 0) target_is_admin = true;
+    }
+  }
+  if (target_is_admin && admin_count <= 1) {
+    ESP_LOGW(TAG, "Loeschen des letzten Admin-Kontos \"%s\" abgelehnt", target);
+    redirect_to(req, "/settings?failed=user_lastadmin");
+    return ESP_OK;
+  }
+
+  bool ok = user_manager_delete(target);
+  if (ok) {
+    char event[128];
+    snprintf(event, sizeof(event), "Benutzer \"%s\" geloescht durch %s", target, username);
+    audit_log_add(event);
+    ESP_LOGW(TAG, "%s", event);
+  }
   redirect_to(req, ok ? "/settings" : "/settings?failed=user");
   return ESP_OK;
 }
@@ -1593,12 +1654,12 @@ static void console_pump_task(void* arg) {
 void web_server_manager_init(void) {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.uri_match_fn = httpd_uri_match_wildcard;
-  config.max_uri_handlers = 32;  // Default (8) reicht seit Einstellungen+Logs nicht mehr; etwas Reserve ueber die aktuell 28 registrierten
+  config.max_uri_handlers = 32;  // Default (8) reicht seit Einstellungen+Logs nicht mehr; etwas Reserve ueber die aktuell 29 registrierten
   // ESP-IDFs Default-Stackgroesse fuer den httpd-Worker-Task ist 4096 Byte
   // (siehe HTTPD_DEFAULT_CONFIG() in esp_http_server.h) - settings_get_handler()
   // allein summiert allein bei seinen groesseren lokalen Puffern
-  // (page[12288]+ota_card[1280]+scan_html[1024]+users_html[512]+
-  // taster_pw_html[160]+diverse kleinere) auf ueber 15 KB Stack-Bedarf in
+  // (page[12288]+ota_card[1280]+scan_html[1024]+users_html[2560]+
+  // taster_pw_html[160]+diverse kleinere) auf ueber 17 KB Stack-Bedarf in
   // EINEM Funktionsaufruf - garantierter Stack-Overflow beim ersten Aufruf
   // von /settings mit dem Default. Gefunden bei einer Ueberpruefung, welche
   // Lektionen aus der Sensormeter-Familie (dort: Arduino-loopTask-Overflow
@@ -1611,7 +1672,7 @@ void web_server_manager_init(void) {
   // wurde. Grosszuegig auf 24 KB gesetzt (deutliche Reserve ueber den
   // ermittelten ~15-16 KB, ein einzelner dedizierter Task, RAM-Kosten
   // vertretbar).
-  config.stack_size = 24576;
+  config.stack_size = 32768;  // auf 32 KB angehoben: settings_get_handler summiert mit page[16384]+users_html[2560] auf ~22 KB
 
   ESP_ERROR_CHECK(httpd_start(&s_server, &config));
 
@@ -1638,6 +1699,8 @@ void web_server_manager_init(void) {
       .uri = "/settings/ota/upload", .method = HTTP_POST, .handler = settings_ota_upload_post_handler};
   httpd_uri_t settings_users_post = {
       .uri = "/settings/users", .method = HTTP_POST, .handler = settings_users_post_handler};
+  httpd_uri_t settings_users_delete_post = {
+      .uri = "/settings/users/delete", .method = HTTP_POST, .handler = settings_users_delete_post_handler};
   httpd_uri_t settings_snmp_post = {
       .uri = "/settings/snmp", .method = HTTP_POST, .handler = settings_snmp_post_handler};
   httpd_uri_t settings_notify_post = {
@@ -1679,6 +1742,7 @@ void web_server_manager_init(void) {
   httpd_register_uri_handler(s_server, &settings_ota_upload_post);
   httpd_register_uri_handler(s_server, &settings_wg_delete_post);
   httpd_register_uri_handler(s_server, &settings_users_post);
+  httpd_register_uri_handler(s_server, &settings_users_delete_post);
   httpd_register_uri_handler(s_server, &settings_snmp_post);
   httpd_register_uri_handler(s_server, &settings_notify_post);
   httpd_register_uri_handler(s_server, &settings_system_post);

@@ -2639,3 +2639,49 @@ Verifiziert: Geraet laeuft mit scharfem Panic stabil weit ueber die alte
 ~6s-Panic-Schwelle hinaus, Tunnel bleibt oben.
 
 Offen weiterhin: NTC-Vorwiderstand (Hardware), n8r8-Paritaetsbuild.
+
+## 2026-07-23, Fortsetzung — Benutzer loeschen (Web-UI) + SSH-Tests abgeschlossen
+
+**Benutzer loeschen.** `user_manager_delete()` existierte im Backend, war aber
+an keinen Endpoint gebunden - es gab also keinen Weg, ein Konto zu loeschen.
+Neu: in der Benutzerverwaltung (Einstellungsseite) hat jeder Eintrag einen
+"Loeschen"-Knopf (POST /settings/users/delete, VERWALTER+, wie das Anlegen),
+mit JS-confirm(). Neuer Handler mit zwei Aussperr-Schutzguards: (1) das eigene
+angemeldete Konto ist nicht loeschbar (auch serverseitig geprueft, der eigene
+Listeneintrag zeigt statt Knopf "angemeldet"), (2) der letzte verbleibende
+Admin ist nicht loeschbar. Jede Loeschung wird ins Audit-Log geschrieben
+("Benutzer \"x\" geloescht durch y"). Dafuer musste users_html 512->2560 und
+page 12288->16384 wachsen (Loeschen-Formulare je Konto), der httpd-Worker-
+Stack entsprechend 24576->32768. Verifiziert: anlegen->erscheint,
+loeschen->weg, Selbst-Loeschen wird mit ?failed=user_self abgewiesen.
+
+**SSH-Tests abgeschlossen (Passwort UND Public-Key, beide auf Hardware
+verifiziert).** Testkonto `tester` (Rolle SSH User) aus der ersten Bring-up-
+Sitzung ist im Storage erhalten geblieben.
+- **Passwort:** `plink -pw` als tester -> Serial-Log "Login (SSH, Passwort):
+  tester (SSH User)" + "SSH-Konsole aktiv". Erfolgreich. (Der plink-Hostkey-
+  Prompt haengt nicht-interaktiv; mit `-hostkey SHA256:...` umgangen.)
+- **Public-Key:** WICHTIGE KORREKTUR zur bisherigen Annahme "ECDSA/Ed25519":
+  Der wolfSSH-Server bietet in server-sig-algs NUR ECDSA an
+  (ecdsa-sha2-nistp256/384/521), KEIN Ed25519. Ein ed25519-Testschluessel
+  wurde daher mit "Permission denied (publickey)" abgelehnt (Auth-Callback
+  wurde gar nicht erst erreicht). Mit einem ECDSA-nistp256-Schluessel
+  (via ssh-keygen -t ecdsa, ueber /account/ssh-key hinterlegt) dann
+  erfolgreich: Serial-Log "Login (SSH, Public-Key): tester (SSH User)".
+  Der Platzhalter im SSH-Key-Feld, der faelschlich "ssh-ed25519 AAAA..."
+  vorschlug, wurde entsprechend auf "nur ECDSA/nistp256-384-521, kein
+  Ed25519/RSA" korrigiert.
+- **Session-Verhalten (bekannt, bestaetigt):** ssh_manager implementiert nur
+  den "shell"-Kanal, keinen "exec"-Kanal - ein `ssh host <kommando>` oeffnet
+  daher eine Konsole (Bridge zum PC) statt das Kommando auszufuehren, der
+  Client "haengt" bis Timeout. Fuer eine BMC-Konsole ist genau das der
+  Anwendungsfall (interaktive Sitzung). Es gibt genau EINE Konsolensitzung
+  gleichzeitig (Web ODER SSH); eine abrupt beendete Client-Sitzung gibt die
+  Konsole erst nach dem 200ms-Socket-Timeout wieder frei, weshalb schnelle
+  Back-to-Back-SSH-Tests einander blockieren koennen - einzeln getestet
+  laeuft beides sauber. Mit gefixtem Watchdog + scharfem Panic blieb das
+  Geraet ueber alle Tests stabil (kein Reboot).
+
+Moegliche Folgearbeiten (nicht gemacht): Ed25519-Public-Key-Auth in wolfSSL/
+wolfSSH aktivieren (HAVE_ED25519), falls ed25519-Schluessel gewuenscht sind;
+"exec"-Kanal fuer nicht-interaktive SSH-Kommandos.
