@@ -27,6 +27,16 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # patchen. NO_ESP32_CRYPT alleine reicht nicht - manche Stellen (z.B.
 # wolfssl/openssl/sha.h) pruefen stattdessen nur die feingranularen
 # Einzel-Flags, deshalb zusaetzlich explizit gesetzt.
+#
+# Ed25519-Aktivierung: HAVE_ED25519 ist im user_settings.h-Template bereits an
+# (ESP32-S3), aber die vier Sub-Features (SIGN/VERIFY/KEY_IMPORT/KEY_EXPORT)
+# werden dort nicht abgeleitet - ohne KEY_IMPORT+KEY_EXPORT deaktiviert wolfSSH
+# ed25519 komplett (internal.h -> WOLFSSH_NO_ED25519), weshalb der Server
+# bislang nur ECDSA anbot. Sie werden direkt in user_settings.h neben
+# HAVE_ED25519 ergaenzt (idempotenter Patch nach project() unten) statt per
+# -D-Flag: so sehen wolfSSL UND wolfSSH sie garantiert im selben
+# Config-Kontext ueber die ohnehin eingebundene user_settings.h. Siehe
+# docs/entscheidungen.md.
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_USER_SETTINGS -DNO_RSA -DNO_ESP32_CRYPT \
 -DNO_WOLFSSL_ESP32_CRYPT_HASH -DNO_WOLFSSL_ESP32_CRYPT_AES -DNO_WOLFSSL_ESP32_CRYPT_RSA_PRI")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DWOLFSSL_USER_SETTINGS -DNO_RSA -DNO_ESP32_CRYPT \
@@ -84,6 +94,32 @@ if(EXISTS "${LED_STRIP_SPI_DEV_FILE}")
                LED_STRIP_SPI_DEV_CONTENT "${LED_STRIP_SPI_DEV_CONTENT}")
         file(WRITE "${LED_STRIP_SPI_DEV_FILE}" "${LED_STRIP_SPI_DEV_CONTENT}")
         message(STATUS "esp-bmc: led_strip led_strip_spi_dev.c esp_heap_caps.h-Patch angewendet")
+    endif()
+endif()
+
+# Ed25519-Pubkey-Auth in wolfSSH aktivieren. wolfSSL setzt bei HAVE_ED25519
+# alle noetigen Sub-Features (SIGN/VERIFY/KEY_IMPORT/KEY_EXPORT) automatisch
+# (settings.h), ABER wolfSSHs Gate (internal.h) verlangt zusaetzlich
+# WOLFSSL_ED25519_STREAMING_VERIFY - ein separates Opt-in, das per Default aus
+# ist; ohne es setzt wolfSSH intern WOLFSSH_NO_ED25519 und bietet nur ECDSA in
+# server-sig-algs an (ed25519-Client-Keys werden abgelehnt). Genau dieses eine
+# Flag hier neben dem vorhandenen "#define HAVE_ED25519" in user_settings.h
+# ergaenzen, damit wolfSSL UND wolfSSH es konsistent im selben Config-Kontext
+# sehen (settings.h leitet daraus auch WOLFSSL_ED25519_PERSISTENT_SHA ab). Das
+# Flag wird nirgends sonst definiert -> keine Redefinition. Idempotentes
+# Muster wie die Patches oben. Siehe docs/entscheidungen.md.
+set(WOLFSSL_USER_SETTINGS_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/managed_components/wolfssl__wolfssl/include/user_settings.h")
+if(EXISTS "${WOLFSSL_USER_SETTINGS_FILE}")
+    file(READ "${WOLFSSL_USER_SETTINGS_FILE}" WOLFSSL_US_CONTENT)
+    string(FIND "${WOLFSSL_US_CONTENT}" "WOLFSSL_ED25519_STREAMING_VERIFY" ALREADY_PATCHED)
+    if(ALREADY_PATCHED EQUAL -1)
+        string(REPLACE
+            "    /* ED25519 requires SHA512 */\n    #define HAVE_ED25519\n"
+            "    /* ED25519 requires SHA512 */\n    #define HAVE_ED25519\n    /* esp-bmc: von wolfSSH fuer ed25519-Pubkey-Auth verlangt (internal.h-Gate) */\n    #define WOLFSSL_ED25519_STREAMING_VERIFY\n"
+            WOLFSSL_US_CONTENT "${WOLFSSL_US_CONTENT}")
+        file(WRITE "${WOLFSSL_USER_SETTINGS_FILE}" "${WOLFSSL_US_CONTENT}")
+        message(STATUS "esp-bmc: wolfssl user_settings.h WOLFSSL_ED25519_STREAMING_VERIFY-Patch angewendet")
     endif()
 endif()
 

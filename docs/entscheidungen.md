@@ -2685,3 +2685,47 @@ Sitzung ist im Storage erhalten geblieben.
 Moegliche Folgearbeiten (nicht gemacht): Ed25519-Public-Key-Auth in wolfSSL/
 wolfSSH aktivieren (HAVE_ED25519), falls ed25519-Schluessel gewuenscht sind;
 "exec"-Kanal fuer nicht-interaktive SSH-Kommandos.
+
+## 2026-07-24 — Ed25519-SSH-Pubkey-Auth aktiviert (ein Flag: WOLFSSL_ED25519_STREAMING_VERIFY)
+
+Nachtrag zum SSH-Test-Abschluss: ed25519-Client-Keys wurden bislang abgelehnt,
+der Server bot nur ECDSA in server-sig-algs an. Ed25519 ist heute der
+De-facto-Standard fuer SSH-Keys (OpenSSH-Default seit 8.x), daher aktiviert.
+
+Ursachensuche war laenger als erwartet (typische wolfSSL/wolfSSH-Config-
+Verschachtelung). Zwischenstationen, die NICHT die Ursache waren: HAVE_ED25519
+ist im wolfSSL-user_settings.h-Template fuer ESP32-S3 bereits an, und
+settings.h leitet daraus automatisch alle vier Sub-Features ab
+(HAVE_ED25519_SIGN/VERIFY/KEY_IMPORT/KEY_EXPORT) - die sind also da (ein
+Versuch, sie zusaetzlich in user_settings.h zu definieren, scheiterte prompt
+mit "redefined"/-Werror, was das bestaetigt). Auch das Setzen per -D-Flag in
+CMAKE_C_FLAGS brachte nichts.
+
+Tatsaechliche Ursache (wolfssh/internal.h): das Gate, das WOLFSSH_NO_ED25519
+setzt, verlangt VIER Bedingungen -
+`!defined(HAVE_ED25519) || !defined(WOLFSSL_ED25519_STREAMING_VERIFY) ||
+!defined(HAVE_ED25519_KEY_IMPORT) || !defined(HAVE_ED25519_KEY_EXPORT)`.
+Die einzige nicht erfuellte war **WOLFSSL_ED25519_STREAMING_VERIFY**, ein
+separates wolfSSL-Opt-in (per Default aus, wird nirgends automatisch gesetzt).
+wolfSSH braucht es, weil es die ed25519-Signatur ueber einen inkrementell
+gefuetterten Hash prueft. Ohne dieses Flag deaktiviert wolfSSH ed25519
+komplett - unabhaengig davon, dass wolfSSL ed25519 voll unterstuetzt.
+
+Fix: `#define WOLFSSL_ED25519_STREAMING_VERIFY` neben dem vorhandenen
+`#define HAVE_ED25519` in wolfSSLs user_settings.h, per idempotentem
+CMake-Patch in firmware/CMakeLists.txt (gleiches Muster wie die wolfssl-
+thread_local-/led_strip-/esp_wireguard-Patches - managed_components werden
+vom Component-Manager bei jeder Neukonfiguration wiederhergestellt). Bewusst
+in user_settings.h statt per -D, damit wolfSSL UND wolfSSH es konsistent im
+selben Config-Kontext sehen (settings.h leitet daraus auch
+WOLFSSL_ED25519_PERSISTENT_SHA ab). Das Flag wird sonst nirgends definiert,
+also keine Redefinition. Kein App-Code-Eingriff noetig
+(user_manager_verify_ssh_public_key vergleicht den Key-Blob byteweise,
+algorithmus-agnostisch).
+
+Verifiziert auf Hardware: server-sig-algs enthaelt jetzt ssh-ed25519, und ein
+ed25519-Client-Key meldet sich erfolgreich an (Serial-Log "Login (SSH,
+Public-Key): tester"). Flash-Zuwachs ~62 KB (62,3% -> 65,3%) durch die
+ed25519-Sign/Verify-/Streaming-Codepfade; weiterhin ~35% frei. Der irrefuehrend
+auf "kein Ed25519" korrigierte Platzhalter im SSH-Key-Feld wurde wieder auf
+"ssh-ed25519 ... oder ecdsa-... (kein RSA)" gesetzt.

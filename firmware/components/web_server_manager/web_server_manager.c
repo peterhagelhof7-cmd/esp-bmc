@@ -287,7 +287,7 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
              "(nur ECDSA/Ed25519, kein RSA).<br>Eigener Schluessel: %s"
              "<form method=\"post\" action=\"/account/ssh-key\">"
              "<textarea name=\"ssh_public_key\" rows=\"2\" "
-             "placeholder=\"ecdsa-sha2-nistp256 AAAA... (nur ECDSA/nistp256-384-521, kein Ed25519/RSA)\"></textarea>"
+             "placeholder=\"ssh-ed25519 AAAA... oder ecdsa-sha2-nistp256 AAAA... (kein RSA)\"></textarea>"
              "<button type=\"submit\">Speichern</button>"
              "</form></div>",
              key_status);
