@@ -251,11 +251,22 @@ zeigt der abschließende Statusabruf die vom Router zugewiesene IP-Adresse
 — ab hier ist das Gerät auch über die Weboberfläche erreichbar (Abschnitt
 4).</p>
 <div class="callout">
-  <div class="callout-title">Kein WLAN eingerichtet?</div>
-  Das Gerät hat keinen eigenen Access-Point-Fallback-Modus — ohne
-  WLAN-Zugangsdaten bleibt es ausschließlich über USB erreichbar. Die
-  Ersteinrichtung lässt sich jederzeit erneut mit
-  <span class="code">.\Setup.ps1 -SkipFlash</span> nachholen.
+  <div class="callout-title">Kein WLAN eingerichtet? Einrichtungs-Access-Point</div>
+  Ist noch kein WLAN konfiguriert, startet das Gerät nach etwa
+  <strong>10&nbsp;Sekunden</strong> automatisch einen eigenen
+  Einrichtungs-Access-Point <span class="code">installer</span> (WPA2,
+  Passwort <span class="code">installer</span>), erreichbar unter
+  <span class="code">192.168.4.1</span>. Verbinde ein Gerät damit, öffne die
+  Weboberfläche und wähle unter „WLAN-Scan“ (Abschnitt 4) ein Netzwerk aus —
+  die verfügbaren Netze werden dort alle 30&nbsp;Sekunden automatisch
+  aktualisiert, bester Empfang oben. Der empfohlene Weg der Ersteinrichtung
+  bleibt USB (<span class="code">.\Setup.ps1 -SkipFlash</span>); der
+  Access-Point ist ein zusätzliches Sicherheitsnetz, falls ein einmal
+  funktionierendes WLAN später dauerhaft wegfällt.
+  <br><br>
+  Ist dagegen ein WLAN <em>konfiguriert</em>, aber gerade nicht erreichbar,
+  wird ihm zunächst Zeit für Reconnect-Versuche gegeben und erst nach
+  <strong>5&nbsp;Minuten</strong> auf den Access-Point umgeschaltet.
 </div>
 
 <!-- ============================================================ -->
@@ -345,7 +356,13 @@ das Gerät per Ping, ob die Adresse im Netz bereits belegt ist — bei einem
 Treffer wird nichts übernommen.</p>
 
 <h3>WLAN-Scan</h3>
-<p>Listet erreichbare Netze mit Verschlüsselungsstatus und Signalstärke.</p>
+<p>Listet die erreichbaren Netze mit Verschlüsselungsstatus und Signalstärke,
+<strong>nach Empfangsstärke absteigend sortiert</strong> (bester Empfang oben),
+ohne SSID-Duplikate. Während der Einrichtungsphase (Einrichtungs-Access-Point
+aktiv bzw. noch kein WLAN gesetzt) wird die Liste alle 30&nbsp;Sekunden
+automatisch aktualisiert. Der Knopf „Jetzt scannen“ erzwingt jederzeit eine
+sofortige Momentaufnahme (auch im Normalbetrieb, in dem sonst nicht
+automatisch gescannt wird, um die laufende Verbindung nicht zu stören).</p>
 
 <h3>WireGuard-VPN</h3>
 <p>Komplette <span class="code">wireguard.conf</span> in ein Textfeld
@@ -357,7 +374,12 @@ zum Löschen der Konfiguration.</p>
 <h3>Benutzerverwaltung</h3>
 <p>Neue Konten anlegen (Benutzername ohne Sonderzeichen, Passwort
 mindestens 8 Zeichen mit mindestens 2 von 3 Zeichenklassen
-Groß-/Kleinbuchstaben/Ziffern), Rolle auswählen.</p>
+Groß-/Kleinbuchstaben/Ziffern), Rolle auswählen. Die Liste der vorhandenen
+Konten zeigt hinter jedem Eintrag einen <strong>Löschen</strong>-Knopf. Zwei
+Sicherungen verhindern ein Aussperren: das <em>eigene, gerade angemeldete</em>
+Konto lässt sich hier nicht löschen (es ist als „angemeldet“ markiert), und
+das <em>letzte verbleibende Admin-Konto</em> ebenfalls nicht. Jede Löschung
+wird im Audit-Log vermerkt.</p>
 
 <h3>SNMP</h3>
 <p>Lese-Community (GET/GETNEXT auf alle Objekte) und separate
@@ -619,7 +641,7 @@ wichtigsten Punkte.</p>
   <tr><td>Board wird von Windows nicht erkannt</td><td>USB-Seriell-Treiber fehlt (Port A) — installieren, danach Geräte-Manager prüfen</td></tr>
   <tr><td>Flash-Vorgang schlägt fehl</td><td>Falscher COM-Port (<span class="code">-Port COM&lt;n&gt;</span> angeben), Board nicht an Port A angeschlossen, oder ein anderes Programm blockiert den seriellen Port (z.&nbsp;B. eine offene Serial-Sitzung, Abschnitt 9.2)</td></tr>
   <tr><td>Erster Verbindungsversuch nach dem Flashen schlägt fehl</td><td>Normal — der erste Boot dauert länger (Abschnitt 1.4), <span class="code">Setup.ps1</span> versucht automatisch mehrfach erneut</td></tr>
-  <tr><td>Gerät nach der Ersteinrichtung nicht im Netzwerk erreichbar</td><td>WLAN-Zugangsdaten prüfen/erneut setzen (<span class="code">.\Setup.ps1 -SkipFlash</span> oder direkt <span class="code">wlan join</span> per USB, Abschnitt 9.1) — kein AP-Fallback-Modus vorhanden</td></tr>
+  <tr><td>Gerät nach der Ersteinrichtung nicht im Netzwerk erreichbar</td><td>WLAN-Zugangsdaten prüfen/erneut setzen (<span class="code">.\Setup.ps1 -SkipFlash</span> oder direkt <span class="code">wlan join</span> per USB, Abschnitt 9.1). Ist kein WLAN konfiguriert, startet nach ~10&nbsp;s der Einrichtungs-Access-Point <span class="code">installer</span> (<span class="code">192.168.4.1</span>), über den sich neue Zugangsdaten eintragen lassen (Abschnitt 2).</td></tr>
   <tr><td>Watchdog-LED bleibt dunkel oder eingefroren</td><td>Serielle Konsole an Port A prüfen (Boot-/Absturz-Log); bei einem echten Hänger startet das Gerät nach kurzer Zeit über den Task-Watchdog automatisch selbst neu (Abschnitt 3)</td></tr>
   <tr><td>Web-Login schlägt fehl</td><td>Standard <span class="code">admin</span>/<span class="code">admin</span> (Abschnitt 4.1) — bei Passwortverlust hilft ein Werksreset (Abschnitt 5) oder das USB-Kommando <span class="code">reset settings</span> (Abschnitt 9.1)</td></tr>
   <tr><td>SSH-Verbindung wird abgelehnt</td><td>Mindestrolle „SSH User" nötig, eigenen Public-Key vorher auf der Übersichtsseite hinterlegt? Nur ECDSA/Ed25519, kein RSA (Abschnitt 6). Läuft evtl. schon eine Web-Konsolen-Sitzung — nur eine gleichzeitige Sitzung möglich</td></tr>
