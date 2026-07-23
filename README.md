@@ -56,8 +56,9 @@ Schnittstelle, die sich zugleich als USB-HID-Tastatur ausgibt.
 `firmware/` ist ein PlatformIO-Projekt (Board `esp32-s3-devkitc-1`,
 Framework **ESP-IDF**, kein Arduino).
 
-**Version:** `0.9.0-rc4` (Beta) — gleiche Version wie die
-Sensormeter-Projektfamilie zum Zeitpunkt der ersten Beta.
+**Version:** `0.9.0-rc5` (Beta). Kernfunktionen (WireGuard-VPN-Tunnel,
+SSH mit Passwort/ECDSA/Ed25519, Sensorik, SNMP, OTA, Web-/USB-Konsole) sind
+auf echter N16R8-Hardware in Betrieb genommen und verifiziert.
 
 Einrichten per PowerShell-Skript (baut, erkennt die Flash-Größe des
 angeschlossenen Boards automatisch, flasht, führt durch die
@@ -82,8 +83,13 @@ pio run -e esp32-s3-devkitc-1-n16r8 -t upload
 - `SensorManager`: NTC 10K B3590 + DHT11, kantengetriggerte
   Schwellwert-Auslösung (löst nur beim Übergang in den Alarmzustand aus,
   nicht bei jedem Messzyklus)
-- `NetworkManager`/`WireguardManager`: WLAN-Anbindung + WireGuard-VPN,
-  Weboberfläche auch über VPN erreichbar
+- `NetworkManager`/`WireguardManager`: WLAN-Anbindung mit Reconnect-Logik und
+  Einrichtungs-Access-Point-Fallback (`installer`, `192.168.4.1`; startet ohne
+  konfiguriertes WLAN nach ~10 s, mit unerreichbarem WLAN nach 5 min) sowie
+  periodischem WLAN-Scan (nach Empfangsstärke sortiert) fürs Webinterface;
+  WireGuard-VPN (Boot-Crash der `esp_wireguard`-Anbindung root-caused und
+  behoben, Tunnel auf echter Hardware verifiziert), Weboberfläche auch über
+  VPN erreichbar
 - `WebServerManager`: Hauptseite, passwortgeschützte Einstellungsseite,
   WebSocket-Konsole zum angeschlossenen PC, WireGuard-Config-Upload,
   admin-only Firmware-Update per Multipart-Upload
@@ -102,8 +108,10 @@ pio run -e esp32-s3-devkitc-1-n16r8 -t upload
 - `WatchdogManager`: onboard RGB-LED (WS2812, GPIO48) als sichtbares
   Lebenszeichen, Task-Watchdog-Anmeldung mit aktiviertem Panic-Reboot bei
   hängenden Tasks
-- `UserManager`: rollenbasierte Benutzerkonten, SSH-Public-Key- und
-  E-Mail-Benachrichtigungs-Selbstbedienung pro Konto
+- `UserManager`: rollenbasierte Benutzerkonten (Anlegen/Löschen über die
+  Weboberfläche, mit Schutz gegen Aussperren — eigenes und letztes Admin-Konto
+  nicht löschbar), SSH-Public-Key- und E-Mail-Benachrichtigungs-Selbstbedienung
+  pro Konto
 - `ConfigManager`/`StorageManager`: Persistenz auf LittleFS
 - USB-Kommandozeile für den Fall, dass das Gerät nur per USB, aber nicht
   per Netzwerk erreichbar ist — siehe
