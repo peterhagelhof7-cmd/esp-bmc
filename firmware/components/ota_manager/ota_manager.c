@@ -1,6 +1,8 @@
 #include "ota_manager.h"
 
+#include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -67,10 +69,24 @@ static void parse_version(const char* v, int* major, int* minor, int* patch, cha
   sscanf(core, "%d.%d.%d", major, minor, patch);
 }
 
+// Vergleicht zwei Vorab-Suffixe (z.B. "rc9" vs "rc10"): erst der Buchstaben-
+// Praefix lexikografisch, dann die Zahl NUMERISCH. Ein reiner strcmp gaebe
+// faelschlich "rc10" < "rc9" (Zeichen '1' < '9') - dann wuerde ein OTA von
+// rc10 ueber rc9 als Downgrade abgelehnt.
+static int compare_suffix(const char* a, const char* b) {
+  size_t ap = 0, bp = 0;
+  while (a[ap] && !isdigit((unsigned char)a[ap])) ap++;
+  while (b[bp] && !isdigit((unsigned char)b[bp])) bp++;
+  if (ap != bp || strncmp(a, b, ap) != 0) return strcmp(a, b);  // versch. Praefix
+  long an = atol(a + ap), bn = atol(b + bp);
+  if (an != bn) return an < bn ? -1 : 1;
+  return 0;
+}
+
 // <0/0/>0 wie strcmp. Bei gleichem a.b.c hat "kein Suffix" Vorrang vor
 // "mit Suffix" (ein Release gilt als neuer als jede Vorabversion derselben
-// Kernversion), bei zwei Suffixen entscheidet der lexikografische
-// Vergleich (deckt "rc3" < "rc4" ab) - identisches Schema wie Sensormeter.
+// Kernversion), bei zwei Suffixen entscheidet compare_suffix() (numerischer
+// rc-Vergleich, "rc9" < "rc10") - identisches Schema wie Sensormeter.
 static int compare_versions(const char* a, const char* b) {
   int a_major, a_minor, a_patch, b_major, b_minor, b_patch;
   char a_suffix[32] = "", b_suffix[32] = "";
@@ -81,7 +97,7 @@ static int compare_versions(const char* a, const char* b) {
   if (a_patch != b_patch) return a_patch - b_patch;
   if (a_suffix[0] == '\0' && b_suffix[0] != '\0') return 1;
   if (a_suffix[0] != '\0' && b_suffix[0] == '\0') return -1;
-  return strcmp(a_suffix, b_suffix);
+  return compare_suffix(a_suffix, b_suffix);
 }
 
 static void handle_marker_payload(const uint8_t* payload, size_t len) {
