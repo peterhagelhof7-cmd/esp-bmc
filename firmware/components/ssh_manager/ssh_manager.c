@@ -1,6 +1,7 @@
 #include "ssh_manager.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "audit_log.h"
@@ -23,6 +24,19 @@ static const char* TAG = "ssh_manager";
 #define HOST_KEY_FILE "/storage/ssh_host_key.der"
 #define HOST_KEY_BUF_CAP 256  // ECC-P256-Privatschluessel im DER-Format passt bequem hinein
 #define SOCKET_TIMEOUT_MS 200  // fuer das Polling zwischen SSH-Handshake-Schritten/Channel-Worker
+// Jede angenommene Verbindung laeuft in einer eigenen Task, damit eine haengende
+// Sitzung NIE den accept()-Loop blockiert (fruehere Ursache fuer "Port 22 tot bis
+// Reboot"). Cap=1 passt zum Single-Console-Modell (genau ein Konsolen-Konsument)
+// und ist damit race-frei (kein paralleler console_claim); jede weitere gleich-
+// zeitige Verbindung wird sofort geschlossen (nicht-blockierend, kein Wedge).
+#define MAX_SSH_SESSIONS 1
+// Deckel fuer tote/haengende Sitzungen, die sonst den (einzigen) Konsolen-Slot
+// belegen wuerden - siehe Kommentar an der Timeout-Pruefung in handle_session().
+#define SESSION_IDLE_TIMEOUT_MS (5 * 60 * 1000)
+// Deckel fuer die Handshake-/Anmeldephase: ein mitten im Handshake getrennter
+// Client (Scanner/Flood/Netzabriss) haelt sonst den Slot, bis TCP-Keepalive
+// greift. Ein echter Handshake ist in Sekunden durch; 20s sind grosszuegig.
+#define HANDSHAKE_TIMEOUT_MS (20 * 1000)
 
 static WOLFSSH_CTX* s_ctx;
 static byte s_host_key[HOST_KEY_BUF_CAP];
@@ -288,6 +302,22 @@ static void handle_session(int client_fd, const char* client_ip) {
   struct timeval tv = {.tv_sec = 0, .tv_usec = SOCKET_TIMEOUT_MS * 1000};
   setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
+  // TCP-Keepalive: ein hart getrennter Client (gekillter Prozess, Netzabriss)
+  // sendet kein EOF/RST. wolfSSH_worker() liefert dann bei jedem recv nur den
+  // SO_RCVTIMEO-Timeout (WS_WANT_READ), was die Session-Schleife als "weiter"
+  // wertet -> sie spinnt endlos und blockiert, da ssh_task single-threaded
+  // handle_session() inline aufruft, den accept()-Loop dauerhaft (Port 22 tot
+  // bis zum Reboot). Mit Keepalive erkennt der Kernel den toten Peer nach
+  // ~KEEPIDLE + KEEPCNT*KEEPINTVL (hier ~30 s) Ruhe, der Socket meldet einen
+  // Fehler -> wolfSSH_worker() gibt WS_SOCKET_ERROR_E -> Schleife bricht ab.
+  // Eine legitim untaetige, aber lebende Session bleibt unberuehrt (ihr
+  // TCP-Stack beantwortet die Proben automatisch). lwIP-Werte in Sekunden.
+  int ka_on = 1, ka_idle = 15, ka_intvl = 5, ka_cnt = 3;
+  setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &ka_on, sizeof(ka_on));
+  setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPIDLE, &ka_idle, sizeof(ka_idle));
+  setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPINTVL, &ka_intvl, sizeof(ka_intvl));
+  setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPCNT, &ka_cnt, sizeof(ka_cnt));
+
   WOLFSSH* ssh = wolfSSH_new(s_ctx);
   if (!ssh) {
     ESP_LOGE(TAG, "wolfSSH_new fehlgeschlagen");
@@ -300,8 +330,14 @@ static void handle_session(int client_fd, const char* client_ip) {
   wolfSSH_set_fd(ssh, client_fd);
 
   int ret;
+  TickType_t hs_start = xTaskGetTickCount();
   do {
     ret = wolfSSH_accept(ssh);
+    if ((ret == WS_WANT_READ || ret == WS_WANT_WRITE) &&
+        xTaskGetTickCount() - hs_start > pdMS_TO_TICKS(HANDSHAKE_TIMEOUT_MS)) {
+      ESP_LOGW(TAG, "SSH-Handshake-Timeout von %s - Abbruch", client_ip);
+      break;  // ret bleibt != WS_SUCCESS -> unten als Fehlschlag behandelt
+    }
   } while (ret != WS_SUCCESS && (ret == WS_WANT_READ || ret == WS_WANT_WRITE));
 
   if (ret != WS_SUCCESS || !sctx.authenticated) {
@@ -324,6 +360,7 @@ static void handle_session(int client_fd, const char* client_ip) {
   QueueHandle_t rx_queue = usb_manager_get_cdc_rx_queue();
   word32 activeChannel = 0;
   byte iobuf[128];
+  TickType_t last_client_activity = xTaskGetTickCount();
 
   for (;;) {
     if (usb_manager_console_owner() != CONSOLE_OWNER_SSH) break;  // von aussen entzogen
@@ -331,6 +368,7 @@ static void handle_session(int client_fd, const char* client_ip) {
     word32 channelId = 0;
     int wret = wolfSSH_worker(ssh, &channelId);
     if (wret == WS_CHAN_RXD) {
+      last_client_activity = xTaskGetTickCount();  // Lebenszeichen vom Client
       activeChannel = channelId;
       int n = wolfSSH_ChannelIdRead(ssh, channelId, iobuf, sizeof(iobuf));
       if (n > 0) usb_manager_cdc_write(iobuf, (size_t)n);
@@ -344,7 +382,22 @@ static void handle_session(int client_fd, const char* client_ip) {
       word32 sendChannel = activeChannel != 0 ? activeChannel : channelId;
       size_t n = 0;
       while (n < sizeof(iobuf) && xQueueReceive(rx_queue, &iobuf[n], 0) == pdTRUE) n++;
-      if (n > 0) wolfSSH_ChannelIdSend(ssh, sendChannel, iobuf, (word32)n);
+      if (n > 0) {
+        int sret = wolfSSH_ChannelIdSend(ssh, sendChannel, iobuf, (word32)n);
+        if (sret == WS_EOF || sret == WS_SOCKET_ERROR_E) break;  // Peer weg beim Senden
+      }
+    }
+
+    // Idle-Timeout: seit SESSION_IDLE_TIMEOUT_MS kein Byte mehr vom Client.
+    // Nur Client->ESP zaehlt als Lebenszeichen, NICHT die eigenen Sends - sonst
+    // wuerde ein toter Peer bei laufender Konsolenausgabe nie erkannt (die Sends
+    // "gelingen" lokal, landen aber nur im TCP-Puffer). Deckelt tote Sessions,
+    // die sonst den Konsolen-Slot halten (ergaenzt das TCP-Keepalive fuer den
+    // Fall unbestaetigter Sendedaten -> langsame Retransmission statt Keepalive).
+    // Entspricht dem ueblichen SSH-Idle-Disconnect.
+    if (xTaskGetTickCount() - last_client_activity > pdMS_TO_TICKS(SESSION_IDLE_TIMEOUT_MS)) {
+      ESP_LOGW(TAG, "SSH-Sitzung Idle-Timeout (%s) - Trennung", client_ip);
+      break;
     }
   }
 
@@ -357,6 +410,25 @@ static void handle_session(int client_fd, const char* client_ip) {
   wolfSSH_shutdown(ssh);
   wolfSSH_free(ssh);
   close(client_fd);
+}
+
+// Zaehler aktiver Session-Tasks. Nur ssh_task erhoeht (einziger Spawner), die
+// jeweilige session_task erniedrigt beim Beenden - kein zusaetzlicher Lock noetig.
+static volatile int s_active_sessions = 0;
+
+typedef struct {
+  int client_fd;
+  char client_ip[16];
+} ssh_session_arg_t;
+
+// Laeuft pro Verbindung in einer eigenen Task, damit handle_session() den
+// accept()-Loop nie blockieren kann. Gibt Argument + Slot beim Ende frei.
+static void session_task(void* arg) {
+  ssh_session_arg_t* sa = (ssh_session_arg_t*)arg;
+  handle_session(sa->client_fd, sa->client_ip);
+  free(sa);
+  s_active_sessions--;
+  vTaskDelete(NULL);
 }
 
 static void ssh_task(void* arg) {
@@ -400,8 +472,31 @@ static void ssh_task(void* arg) {
 
     char client_ip[16];
     inet_ntoa_r(client_addr.sin_addr, client_ip, sizeof(client_ip));
+
+    // Nicht-blockierend: ist bereits eine Sitzung aktiv (auch eine haengende,
+    // die noch abgebaut wird), Verbindung sofort schliessen statt den accept()-
+    // Loop zu blockieren. Sonst eigene Task fuer die Sitzung.
+    if (s_active_sessions >= MAX_SSH_SESSIONS) {
+      ESP_LOGW(TAG, "SSH-Verbindung von %s abgewiesen - Sitzung belegt", client_ip);
+      close(client_fd);
+      continue;
+    }
+    ssh_session_arg_t* sa = malloc(sizeof(*sa));
+    if (!sa) {
+      close(client_fd);
+      continue;
+    }
+    sa->client_fd = client_fd;
+    memcpy(sa->client_ip, client_ip, sizeof(client_ip));
+
     ESP_LOGI(TAG, "SSH-Verbindung von %s", client_ip);
-    handle_session(client_fd, client_ip);
+    s_active_sessions++;
+    if (xTaskCreate(session_task, "ssh_session", 8192, sa, 4, NULL) != pdPASS) {
+      s_active_sessions--;
+      free(sa);
+      close(client_fd);
+      ESP_LOGE(TAG, "SSH-Session-Task konnte nicht erstellt werden");
+    }
   }
 }
 
