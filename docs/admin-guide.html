@@ -176,12 +176,34 @@ optionale Sensoren (NTC-Temperaturfühler, DHT11).</p>
 </div>
 
 <h2>1.2 Anschließen an den Computer</h2>
-<p>Das Board per USB-C-Kabel an <b>Port A</b> mit einem Windows-Rechner
-verbinden. Windows sollte automatisch einen neuen COM-Port erkennen —
-falls nicht, fehlt vermutlich der passende USB-Seriell-Treiber für den
-verbauten Bridge-Chip. Im Geräte-Manager unter „Anschlüsse (COM &amp;
-LPT)" prüfen, ob ein neuer Port (z.&nbsp;B. <span class="code">COM7</span>)
-erscheint.</p>
+<p>Die Ersteinrichtung nutzt <b>beide</b> USB-C-Ports mit unterschiedlichen
+Aufgaben:</p>
+<ul>
+  <li><b>Port A (UART-Bridge)</b> — zum <b>Flashen</b> der Firmware
+  (<span class="code">pio run -t upload</span> / <span class="code">esptool</span>).
+  Erscheint sofort als klassischer COM-Port; die USB-OTG-Brücke ist dafür
+  <b>nicht</b> nötig.</li>
+  <li><b>Port B (natives USB)</b> — für die
+  <span class="code">##ESPR</span>-Konfigurationskommandos des Setup-Skripts
+  und die interaktive USB-Konsole (Abschnitt&nbsp;9). Erscheint nur dann als
+  COM-Port, wenn die <b>USB-OTG-Lötbrücke gesetzt</b> ist (Warnung in
+  Abschnitt&nbsp;1.1) — dann als Espressif-CDC-Port
+  (<span class="code">VID_303A</span>).</li>
+</ul>
+<p>Am einfachsten <b>beide Ports gleichzeitig</b> per USB-C-Kabel anschließen;
+Windows zeigt dann zwei neue COM-Ports (Geräte-Manager → „Anschlüsse (COM &amp;
+LPT)"). Erscheint trotz gesetzter Brücke kein Port-B-Eintrag, fehlt entweder der
+USB-Seriell-Treiber oder die Brücke sitzt nicht durch.</p>
+<div class="callout warn">
+  <div class="callout-title">Beim Port-Auswahldialog den nativen USB-Port (Port B) wählen</div>
+  Nach dem Flashen fragt <span class="code">Setup.ps1</span>, mit welchem
+  COM-Port es sich verbinden soll. Hier den <b>nativen USB-Port (Port&nbsp;B,
+  <span class="code">VID_303A</span>)</b> wählen — <b>nicht</b> den
+  UART-Bridge-Port A. Die <span class="code">##ESPR</span>-Kommandos laufen
+  ausschließlich über Port&nbsp;B; wird versehentlich Port&nbsp;A gewählt,
+  bleiben alle Konfigurationskommandos wirkungslos (das Gerät antwortet dort
+  nicht).
+</div>
 
 <h2>1.3 Setup-Skript ausführen</h2>
 <p><span class="code">tools/Setup.ps1</span> übernimmt die komplette
@@ -192,7 +214,7 @@ optional WLAN einrichten. Details zum Ablauf: Abschnitt 2.</p>
 .\Setup.ps1</pre>
 <table>
   <tr><th>Parameter</th><th>Wirkung</th></tr>
-  <tr><td><span class="code">-Port COM7</span></td><td>Seriellen Port fest vorgeben, falls mehrere Boards angeschlossen sind oder die Auswahl übersprungen werden soll</td></tr>
+  <tr><td><span class="code">-Port COM7</span></td><td>Den <b>nativen USB-Port (Port B, <span class="code">VID_303A</span>)</b> für die <span class="code">##ESPR</span>-Verbindung fest vorgeben (überspringt den Auswahldialog) — nicht den UART-Bridge-Port</td></tr>
   <tr><td><span class="code">-SkipFlash</span></td><td>Nur die Konfiguration anwenden, keine neue Firmware flashen — z.&nbsp;B. bei einem bereits geflashten Gerät</td></tr>
   <tr><td><span class="code">-EnvName &lt;env&gt;</span></td><td>PlatformIO-Umgebung fest vorgeben (<span class="code">esp32-s3-devkitc-1-n16r8</span>/<span class="code">-n8r8</span>) — normalerweise nicht nötig, siehe Callout unten</td></tr>
   <tr><td><span class="code">-Username</span> / <span class="code">-Password</span></td><td>Abweichende Login-Daten für den Erstkontakt per USB (Default: <span class="code">admin</span>/<span class="code">admin</span>)</td></tr>
@@ -238,6 +260,15 @@ führt <span class="code">Setup.ps1</span> durch vier weitere Schritte, alle
 über die USB-Kommandoschnittstelle (Abschnitt 9) — zu diesem Zeitpunkt
 existiert noch kein Netzwerkzugriff, deshalb läuft die komplette
 Ersteinrichtung bewusst über USB, nicht über die Weboberfläche.</p>
+<div class="callout warn">
+  <div class="callout-title">Läuft über den nativen USB-Port (Port B) — Brücke nötig</div>
+  Diese Schritte nutzen das <span class="code">##ESPR</span>-Protokoll, das
+  <b>ausschließlich über Port&nbsp;B (nativer USB)</b> erreichbar ist. Die
+  USB-OTG-Lötbrücke auf der Board-Rückseite muss dafür gesetzt sein
+  (Abschnitt&nbsp;1.1), und beim Port-Auswahldialog ist der native USB-Port
+  (<span class="code">VID_303A</span>) zu wählen — nicht der UART-Bridge-Port,
+  über den geflasht wird.
+</div>
 
 <h2>2.1 Konfigurationsvorlage bearbeiten</h2>
 <p>Das Skript öffnet <span class="code">tools/config_template.txt</span>
