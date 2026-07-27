@@ -135,7 +135,20 @@ function Send-EspBmcWireguardConfig {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($ConfText)
     $Link.Write("##ESPR wg upload $($bytes.Length)`r`n")
     $Link.Write($bytes, 0, $bytes.Length)
-    $resp = Read-EspBmcResponse -Link $Link
+    # finish_wg_upload() wendet die Config synchron an und bringt dabei den
+    # WireGuard-Tunnel hoch (Endpoint-DNS-Aufloesung + erster Handshake),
+    # bevor ueberhaupt "##ESPR OK" gesendet wird - das dauert deutlich laenger
+    # als ein normales Kommando und sprengt das 5s-Standard-Lese-Timeout
+    # (Symptom: TimeoutException trotz erfolgreichem Upload). Deshalb das
+    # Lese-Timeout nur fuer DIESE eine Antwort hochsetzen und danach
+    # zuverlaessig wiederherstellen.
+    $savedTimeout = $Link.ReadTimeout
+    $Link.ReadTimeout = 30000
+    try {
+        $resp = Read-EspBmcResponse -Link $Link
+    } finally {
+        $Link.ReadTimeout = $savedTimeout
+    }
     if (-not $resp.Ok) {
         throw "wg upload fehlgeschlagen: $($resp.Detail)"
     }
