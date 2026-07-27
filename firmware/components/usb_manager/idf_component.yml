@@ -1,2 +1,6 @@
-dependencies:
-  espressif/esp_tinyusb: "^1.7.0"
+# usb_manager nutzt jetzt das IDF-eigene USB-Serial-JTAG
+# (esp_driver_usb_serial_jtag) fuer die Konsole zum gesteuerten PC - keine
+# externen (managed) Abhaengigkeiten mehr. Frueher: espressif/esp_tinyusb
+# (USB-OTG/CDC+HID), entfernt, weil das USB-OTG auf dieser Hardware keine
+# USB-Session bekam. Siehe docs/entscheidungen.md.
+dependencies: {}

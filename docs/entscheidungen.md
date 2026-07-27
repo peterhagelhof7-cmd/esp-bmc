@@ -2777,3 +2777,56 @@ absteigend sortierte, deduplizierte Liste (verifiziert: -51 > -58 > -59 ...
 > -93 dBm). Das 10s-AP-Timing und der periodische Scan im AP-Modus sind code-
 verifiziert; ein vollstaendiger Live-Test im AP-Modus wurde ausgelassen, um die
 Config (deren PSK hier nicht vorliegt) nicht zu verlieren.
+
+## 2026-07-27 — USB-Konsole: Pivot von TinyUSB/USB-OTG auf USB-Serial-JTAG
+
+Der P4-USB-Kanal zum gesteuerten PC wurde von **TinyUSB (USB-OTG, CDC+HID)** auf
+das **ROM-USB-Serial-JTAG (USJ)** umgestellt. Ausloeser war, dass das USB-OTG auf
+der Hardware keine USB-Session bekam (`tud_connected` blieb 0, die
+Deskriptor-Anfrage scheiterte host-seitig). Das USJ ist ein einfacher, ROM-
+gestuetzter CDC-Serialkanal auf denselben Pins (GPIO19 = D-, GPIO20 = D+) und
+damit robuster fuer den reinen Konsolenzweck.
+
+**Tradeoff:** USJ ist rein seriell -> die **HID-Tastatur entfaellt**. Fuer das
+Konsolen-Ziel (Textkonsole + `##ESPR`-Kommandoprotokoll) irrelevant.
+
+**Umsetzung:** `usb_manager.c` nutzt jetzt `usb_serial_jtag_driver_install()` +
+einen RX-Task statt des TinyUSB-Stacks; `CMakeLists.txt` REQUIRES
+`esp_driver_usb_serial_jtag` statt `esp_tinyusb`; `idf_component.yml` ohne
+externe Managed-Dependency. `send_key`/HID entfernt, `cdc_host_ready()` -> true.
+
+**Realer Config-Bug (behoben):** `CONFIG_USJ_ENABLE_USB_SERIAL_JTAG` (haelt den
+USJ-Takt im App-Betrieb an; ohne ihn meldet sich der Port beim App-Start ab) war
+im generierten n16r8-sdkconfig stale nicht gesetzt, obwohl `sdkconfig.defaults`
+`=y` sagte. sdkconfig regeneriert -> jetzt in beiden Targets `=y`.
+
+### Warum die Enumerierung am realen Board zunaechst trotzdem scheiterte: HARDWARE
+
+Der native USB enumerierte auf dem ersten Board firmware-uebergreifend nicht
+(Windows: `VID_0000`, Descriptor-Fehler) - auch im ROM-Download-Mode, in dem
+unsere Firmware gar nicht laeuft. Per Ausschlussverfahren + Clean-Room-
+Testfirmware (`usb-port-test`, reiner USJ-Bring-up, null ESP-BMC-Code) als
+Hardware-Fehler identifiziert: die Firmware ist gesund (`install = OK`,
+`usj_host_connected` bleibt 0), der native USB-Datenpfad traegt aber keine Daten.
+
+Board-Datenblatt (diymore ESP32-S3-DevKitC-1): auf der **Rueckseite** sitzt ein
+per Design offener Loetjumper **"USB-OTG"**, der erst gebrueckt werden muss,
+damit der native Type-C-Port ("USB"-Silkscreen) elektrisch angebunden ist. Auf
+dem ersten Board blieb die Anbindung auch nach Bruecken unwirksam (kalte Stelle
+oder zusaetzlich getrennte D--Leitung).
+
+**A/B-Beweis:** ein zweites Board gleichen Typs enumeriert mit identischer
+Firmware den nativen USB einwandfrei als `VID_303A&PID_1001` (USB JTAG/serial
+debug unit -> CDC-COM), `usj_host_connected=1`, bidirektionales Echo ok. rc7
+(0.9.0-rc7) darauf geflasht: die echte `usb_manager.c`-Konsole antwortet ueber
+den nativen Port (`##ESPR login admin admin` -> `##ESPR OK Admin`; `##ESPR
+status` -> voller Statusblock). => **Der USJ-Ansatz und der Code sind auf
+intakter Hardware verifiziert; das erste Board hat einen Einzeldefekt am
+nativen USB, der Board-Typ ist in Ordnung.**
+
+**Korrektur zur urspruenglichen OTG-Ablehnung:** die Beobachtung "USB-OTG bekam
+keine Session" wurde mit noch OFFENEM USB-OTG-Jumper gemessen - ohne
+durchverbundene D+/D- konnte auch TinyUSB nie eine Session bekommen. Der
+eigentliche USJ-Vorteil (einfacher, ROM-gestuetzt, kein Deskriptor-/Component-
+Manager-Aufwand) bleibt gueltig; die Wahl war richtig, der damals genannte
+Ablehnungsgrund war aber teils der fehlenden Bruecke geschuldet.

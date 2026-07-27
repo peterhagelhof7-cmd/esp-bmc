@@ -17,11 +17,21 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 
-# UsbManager (P4, docs/entscheidungen.md) - TinyUSB-Composite-Device CDC+HID
-# ueber den nativen USB-Port. Deskriptoren bleiben NULL/Kconfig-generiert.
-CONFIG_TINYUSB_CDC_ENABLED=y
-CONFIG_TINYUSB_CDC_COUNT=1
-CONFIG_TINYUSB_HID_COUNT=1
+# UsbManager (2026-07-24): Konsole zum gesteuerten PC ueber das USB-Serial-JTAG
+# des ESP32-S3 (nativer USB-Port), NICHT ueber TinyUSB-USB-OTG. Hintergrund: das
+# USB-OTG bekam auf dieser Hardware keine USB-Session (tud_connected blieb 0),
+# das ROM-gestuetzte USB-Serial-JTAG ist der robustere CDC-Serialkanal. Tradeoff:
+# keine HID-Tastatur. Siehe docs/entscheidungen.md.
+#
+# USJ-Modul muss aktiv sein (Takt an), damit der usb_serial_jtag-Treiber im
+# usb_manager den nativen Port als CDC bedienen kann - default y, hier zur
+# Klarheit explizit.
+CONFIG_USJ_ENABLE_USB_SERIAL_JTAG=y
+
+# Aber KEINE sekundaere Konsole auf USB-Serial-JTAG: sonst wuerde die IDF ihre
+# Log-Ausgabe auf den nativen Port legen und mit dem usb_manager-Datenkanal
+# kollidieren. Die primaere Konsole/Logs bleiben auf UART0 (CH343-Port).
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 # WebServerManager (P5) - WebSocket-Konsole braucht das explizit, Default ist aus.
 CONFIG_HTTPD_WS_SUPPORT=y

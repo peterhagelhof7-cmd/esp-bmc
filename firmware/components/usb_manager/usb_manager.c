@@ -6,53 +6,28 @@
 #include <string.h>
 
 #include "audit_log.h"
-#include "class/hid/hid_device.h"
 #include "config_manager.h"
+#include "driver/usb_serial_jtag.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/task.h"
 #include "gpio_manager.h"
 #include "network_manager.h"
 #include "sensor_history.h"
 #include "sensor_manager.h"
 #include "snmp_manager.h"
 #include "storage_manager.h"
-#include "tinyusb.h"
-#include "tusb_cdc_acm.h"
 #include "user_manager.h"
 #include "wireguard_manager.h"
 
 static const char* TAG = "usb_manager";
 
-// esp_tinyusb generiert den Konfigurations-Deskriptor NUR automatisch, wenn
-// KEINE der Klassen HID/MIDI/ECM_RNDIS/DFU/BTH aktiv ist (siehe
-// managed_components/espressif__esp_tinyusb/descriptors_control.c,
-// tinyusb_set_descriptors() - Kommentar "Default configuration descriptor
-// must be provided for the following classes"). Mit aktivem HID (unser
-// Tastatur-Fallback) MUSS der Composite-Deskriptor deshalb von Hand
-// zusammengesetzt werden - der urspruengliche Versuch, alles auf Kconfig
-// zu verlassen, schlug erst beim ersten echten Boot (Wokwi) mit
-// "Configuration descriptor must be provided for this device" fehl, siehe
-// docs/entscheidungen.md.
-enum {
-  USB_ITF_CDC = 0,  // belegt Interface 0 UND 1 (Control + Data, siehe TUD_CDC_DESCRIPTOR)
-  USB_ITF_HID = 2,
-  USB_ITF_COUNT
-};
-
-#define USB_EP_CDC_NOTIF 0x81
-#define USB_EP_CDC_OUT 0x02
-#define USB_EP_CDC_IN 0x82
-#define USB_EP_HID_IN 0x83
-
-#define USB_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_HID_DESC_LEN)
-
-static uint8_t const s_hid_report_desc[] = {TUD_HID_REPORT_DESC_KEYBOARD()};
-
-static uint8_t const s_config_desc[] = {
-    TUD_CONFIG_DESCRIPTOR(1, USB_ITF_COUNT, 0, USB_CONFIG_TOTAL_LEN, 0, 100),
-    TUD_CDC_DESCRIPTOR(USB_ITF_CDC, 0, USB_EP_CDC_NOTIF, 8, USB_EP_CDC_OUT, USB_EP_CDC_IN, 64),
-    TUD_HID_DESCRIPTOR(USB_ITF_HID, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(s_hid_report_desc), USB_EP_HID_IN, 16, 10),
-};
+// Konsole zum gesteuerten PC laeuft ueber das USB-Serial-JTAG des ESP32-S3
+// (nativer USB-Port), NICHT ueber TinyUSB-USB-OTG. Grund: das USB-OTG erkannte
+// auf diesem Board keine USB-Session (tud_connected blieb 0, Deskriptor-Anfrage
+// scheiterte host-seitig), waehrend das ROM-gestuetzte USB-Serial-JTAG als
+// einfacher CDC-Serialkanal zuverlaessig ist. Tradeoff: keine HID-Tastatur mehr
+// (USJ ist rein seriell). Siehe docs/entscheidungen.md.
 
 // Bidirektionale Weiterleitung CDC <-> interne Konsolen-Queue (Pflichtenheft
 // Abschnitt 3.7) - P5 (WebServerManager) liest/schreibt darueber. Groesse
@@ -60,7 +35,6 @@ static uint8_t const s_config_desc[] = {
 #define CDC_RX_QUEUE_LEN 512
 
 static QueueHandle_t s_cdc_rx_queue;
-static volatile bool s_cdc_host_ready;  // DTR-Zustand
 
 // =============================================================================
 // USB-Kommandoprotokoll (Host -> ESP-BMC) - docs/entscheidungen.md
@@ -713,75 +687,62 @@ static void process_cmd_byte(char c) {
   }
 }
 
-static void cdc_rx_callback(int itf, cdcacm_event_t* event) {
-  (void)event;
-  uint8_t buf[64];
-  size_t rx_len = 0;
-  esp_err_t err = tinyusb_cdcacm_read((tinyusb_cdcacm_itf_t)itf, buf, sizeof(buf), &rx_len);
-  if (err != ESP_OK) return;
-
-  for (size_t i = 0; i < rx_len; i++) {
-    // Waehrend eines "wg upload"-Rohdatenblocks: Bytes NICHT in die
-    // Konsolen-Queue spiegeln (das waere kein Konsolentext, sondern eine
-    // mehrere hundert Byte grosse Binaer-/Text-Nutzlast) und nicht als
-    // Kommandozeile parsen, sondern direkt in den Upload-Puffer schreiben.
-    if (s_wg_upload_active) {
-      if (s_wg_upload_received < s_wg_upload_expected) {
-        s_wg_upload_buf[s_wg_upload_received++] = (char)buf[i];
-      }
-      if (s_wg_upload_received >= s_wg_upload_expected) {
-        finish_wg_upload();
-      }
-      continue;
+// Verarbeitet ein vom gesteuerten PC empfangenes Byte: waehrend eines
+// "wg upload"-Rohdatenblocks direkt in den Upload-Puffer, sonst in die
+// Konsolen-Queue (Web-/SSH-Konsole) UND den ##ESPR-Kommandoparser.
+static void process_rx_byte(uint8_t b) {
+  if (s_wg_upload_active) {
+    if (s_wg_upload_received < s_wg_upload_expected) {
+      s_wg_upload_buf[s_wg_upload_received++] = (char)b;
     }
-
-    // Nicht-blockierend - falls die Queue voll ist (kein Verbraucher vor
-    // P5), wird das aelteste Byte verworfen statt den USB-Task zu blockieren.
-    if (xQueueSend(s_cdc_rx_queue, &buf[i], 0) != pdTRUE) {
-      uint8_t dummy;
-      xQueueReceive(s_cdc_rx_queue, &dummy, 0);
-      xQueueSend(s_cdc_rx_queue, &buf[i], 0);
+    if (s_wg_upload_received >= s_wg_upload_expected) {
+      finish_wg_upload();
     }
-    process_cmd_byte((char)buf[i]);
+    return;
   }
+
+  // Nicht-blockierend - Queue voll (kein Verbraucher): aeltestes Byte
+  // verwerfen statt den Task zu blockieren.
+  if (xQueueSend(s_cdc_rx_queue, &b, 0) != pdTRUE) {
+    uint8_t dummy;
+    xQueueReceive(s_cdc_rx_queue, &dummy, 0);
+    xQueueSend(s_cdc_rx_queue, &b, 0);
+  }
+  process_cmd_byte((char)b);
 }
 
-static void cdc_line_state_callback(int itf, cdcacm_event_t* event) {
-  (void)itf;
-  s_cdc_host_ready = event->line_state_changed_data.dtr;
-  ESP_LOGI(TAG, "CDC-Host %s (DTR=%d)", s_cdc_host_ready ? "bereit" : "nicht bereit", s_cdc_host_ready);
+// Liest kontinuierlich vom USB-Serial-JTAG (nativer USB-Port zum gesteuerten
+// PC) und leitet jedes Byte an process_rx_byte weiter.
+static void usj_rx_task(void* arg) {
+  (void)arg;
+  uint8_t buf[64];
+  for (;;) {
+    int n = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(100));
+    for (int i = 0; i < n; i++) process_rx_byte(buf[i]);
+  }
 }
 
 void usb_manager_init(void) {
   s_cdc_rx_queue = xQueueCreate(CDC_RX_QUEUE_LEN, sizeof(uint8_t));
 
-  // Geraete-Deskriptor bleibt NULL (Kconfig-Default reicht), der
-  // Konfigurations-Deskriptor muss wegen HID von Hand kommen (s_config_desc
-  // oben) - siehe docs/entscheidungen.md.
-  tinyusb_config_t tusb_cfg = {
-      .device_descriptor = NULL,
-      .configuration_descriptor = s_config_desc,
+  usb_serial_jtag_driver_config_t usj_cfg = {
+      .rx_buffer_size = 1024,
+      .tx_buffer_size = 1024,
   };
-  ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
+  ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usj_cfg));
+  xTaskCreate(usj_rx_task, "usj_rx", 3072, NULL, 5, NULL);
 
-  tinyusb_config_cdcacm_t cdc_cfg = {
-      .usb_dev = TINYUSB_USBDEV_0,
-      .cdc_port = TINYUSB_CDC_ACM_0,
-      .callback_rx = &cdc_rx_callback,
-      .callback_rx_wanted_char = NULL,
-      .callback_line_state_changed = &cdc_line_state_callback,
-      .callback_line_coding_changed = NULL,
-  };
-  ESP_ERROR_CHECK(tusb_cdc_acm_init(&cdc_cfg));
-
-  ESP_LOGI(TAG, "UsbManager gestartet (CDC + HID-Tastatur, Kommandoprotokoll " CMD_PREFIX ")");
+  ESP_LOGI(TAG, "UsbManager gestartet (USB-Serial-JTAG-Konsole, Kommandoprotokoll " CMD_PREFIX ")");
 }
 
-bool usb_manager_cdc_host_ready(void) { return s_cdc_host_ready; }
+// Der USJ-Treiber liefert keinen DTR-Zustand; der einzige Nutzer war der
+// (entfallene) HID-Fallback. Konsole gilt als bereit, sobald der Treiber laeuft.
+bool usb_manager_cdc_host_ready(void) { return true; }
 
 void usb_manager_cdc_write(const uint8_t* data, size_t len) {
-  tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, data, len);
-  tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0);
+  // Kurzes Timeout: ist kein Host verbunden/liest nicht, laeuft der TX-Puffer
+  // voll - dann verwerfen statt die Konsolen-Bruecke zu blockieren.
+  usb_serial_jtag_write_bytes(data, len, pdMS_TO_TICKS(20));
 }
 
 QueueHandle_t usb_manager_get_cdc_rx_queue(void) { return s_cdc_rx_queue; }
@@ -795,45 +756,3 @@ void usb_manager_console_release(console_owner_t owner) {
 }
 
 console_owner_t usb_manager_console_owner(void) { return s_console_owner; }
-
-void usb_manager_send_key(uint8_t modifier, uint8_t keycode) {
-  if (!tud_hid_n_ready(0)) return;
-  uint8_t keycodes[6] = {keycode, 0, 0, 0, 0, 0};
-  tud_hid_n_keyboard_report(0, 0, modifier, keycodes);
-  // Kurze Verzoegerung, damit der Host den Tastendruck als eigenes Ereignis
-  // erkennt, dann Release-Report (alles 0) senden.
-  vTaskDelay(pdMS_TO_TICKS(10));
-  uint8_t released[6] = {0};
-  tud_hid_n_keyboard_report(0, 0, 0, released);
-}
-
-// ---------------------------------------------------------------------
-// TinyUSB-HID-Pflichtkallbacks (kein Weak-Default in dieser TinyUSB-Version,
-// siehe managed_components/espressif__tinyusb/src/class/hid/hid_device.c -
-// ohne diese drei schlaegt der Link fehl).
-// ---------------------------------------------------------------------
-
-uint8_t const* tud_hid_descriptor_report_cb(uint8_t instance) {
-  (void)instance;
-  return s_hid_report_desc;
-}
-
-uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t* buffer,
-                                uint16_t reqlen) {
-  (void)instance;
-  (void)report_id;
-  (void)report_type;
-  (void)buffer;
-  (void)reqlen;
-  return 0;  // GET_REPORT wird nicht unterstuetzt
-}
-
-void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer,
-                            uint16_t bufsize) {
-  (void)instance;
-  (void)report_id;
-  (void)report_type;
-  (void)buffer;
-  (void)bufsize;
-  // SET_REPORT (z.B. Tastatur-LEDs) wird nicht ausgewertet.
-}

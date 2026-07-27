@@ -23,12 +23,12 @@
 
 void usb_manager_init(void);
 
-// true, wenn eine Host-Anwendung den CDC-Port aktiv geoeffnet hat (DTR
-// gesetzt) - Entscheidungsgrundlage fuer CDC- vs. HID-Fallback.
+// Historisch fuer die CDC-vs-HID-Entscheidung (DTR). Der USJ-Transport liefert
+// keinen DTR-Zustand und HID entfiel - liefert jetzt konstant true.
 bool usb_manager_cdc_host_ready(void);
 
-// Sendet Daten auf dem CDC-Kanal (z.B. spaeter aus der WebSocket-Konsole,
-// P5). Nicht blockierend - puffert intern, siehe TinyUSB-CDC-Queue.
+// Sendet Daten auf dem Konsolenkanal zum gesteuerten PC (aus Web-/SSH-Konsole).
+// Nicht blockierend - kurzes TX-Timeout, verwirft bei fehlendem Host.
 void usb_manager_cdc_write(const uint8_t* data, size_t len);
 
 // Ueber CDC empfangene Rohbytes landen hier (Pflichtenheft: "Bidirektionale
@@ -37,10 +37,6 @@ void usb_manager_cdc_write(const uint8_t* data, size_t len);
 // einzelne Bytes (uint8_t), bewusst simpel gehalten, bis P5 den tatsaechlichen
 // Konsolen-Rahmen definiert.
 QueueHandle_t usb_manager_get_cdc_rx_queue(void);
-
-// HID-Tastatur-Fallback: sendet einen einzelnen Tastendruck (Press+Release)
-// mit optionalem Modifier (siehe TinyUSB hid.h HID_KEYBOARD_MODIFIER_*).
-void usb_manager_send_key(uint8_t modifier, uint8_t keycode);
 
 // --- Konsolen-Besitz (P7: SSH-Server bruecckt auf denselben CDC-Kanal wie
 // die WebSocket-Konsole, siehe docs/entscheidungen.md "SSH-Server (P7)") ---
