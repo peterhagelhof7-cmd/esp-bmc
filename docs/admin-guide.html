@@ -139,10 +139,30 @@ optionale Sensoren (NTC-Temperaturfühler, DHT11).</p>
   <div class="port-box b">
     <div class="port-icon"></div>
     <b>Port B — natives USB</b>
-    ESP32-S3-eigener USB-Controller. Wird von der Firmware selbst NICHT für
-    die Ersteinrichtung genutzt (das läuft über Port A) — reserviert für
-    eine spätere CDC/HID-Weiterleitung an den verwalteten PC.
+    ESP32-S3-eigener USB-Controller. Stellt dem verwalteten PC die serielle
+    USB-Konsole (<span class="code">##ESPR</span>-Kommandos, Abschnitt 9)
+    bereit. Die Ersteinrichtung selbst läuft über Port A. <b>Funktioniert nur,
+    wenn die Lötbrücke „USB-OTG" auf der Board-Rückseite gesetzt ist</b> —
+    siehe Warnung unten.
   </div>
+</div>
+<div class="callout warn">
+  <div class="callout-title">Wichtig: Lötbrücke „USB-OTG" auf der Board-Rückseite setzen</div>
+  Bei diesen ESP32-S3-DevKitC-1-Boards ist der native USB-Port (Port&nbsp;B)
+  <b>ab Werk elektrisch nicht angebunden</b>: auf der Rückseite sitzt ein per
+  Design offener Lötjumper mit der Aufschrift <b>„USB-OTG"</b> (Datenblatt:
+  <i>„Short or use 0&nbsp;ohm resistor to connect … the Type-C port of the
+  silk-screened USB can be used for OTG function"</i>). <b>Ohne gesetzte Brücke
+  enumeriert Port&nbsp;B nicht</b> — Windows meldet dann nur ein „Unbekanntes
+  USB-Gerät" (<span class="code">VID_0000</span>, Fehler beim Anfordern der
+  Gerätebeschreibung).
+  <div style="margin-top:8px"></div>
+  <b>Vor der Nutzung der USB-Konsole:</b> die beiden „USB-OTG"-Pads auf der
+  Rückseite mit einem Lötklecks (oder 0&nbsp;Ω-Widerstand) verbinden und die
+  Verbindung per Multimeter-Durchgangston prüfen. Bei intakter Brücke erscheint
+  Port&nbsp;B am PC als Espressif-CDC-COM-Port (<span class="code">VID_303A</span>).
+  Port&nbsp;A (Flashen/Setup über die UART-Bridge) ist von der Brücke
+  <b>nicht</b> betroffen.
 </div>
 <div class="callout">
   <div class="callout-title">Zuordnung nur mit mittlerem Vertrauen bestimmt</div>
@@ -545,9 +565,13 @@ fehlende SNMP-Daten.</p>
 
 <!-- ============================================================ -->
 <h1 class="section" id="sec9"><span class="num">9</span>USB-Kommandozeile</h1>
-<p>Dasselbe USB-Kabel, das auch zum Flashen dient (Port A), trägt
-zusätzlich ein einfaches Zeilen-Kommandoprotokoll — praktisch, wenn das
-Gerät (noch) nicht im Netzwerk erreichbar ist. Jede Zeile beginnt mit
+<p>Der <b>native USB-Port (Port B)</b> trägt ein einfaches
+Zeilen-Kommandoprotokoll — praktisch, wenn das Gerät (noch) nicht im
+Netzwerk erreichbar ist. <b>Voraussetzung:</b> die Lötbrücke „USB-OTG" auf
+der Board-Rückseite muss gesetzt sein (siehe Warnung in Abschnitt&nbsp;1.1);
+Port&nbsp;B erscheint dann als eigener Espressif-CDC-COM-Port
+(<span class="code">VID_303A</span>), getrennt vom Flash-/Setup-Port&nbsp;A.
+Jede Zeile beginnt mit
 <span class="code">##ESPR </span>, Antworten mit
 <span class="code">##ESPR OK</span>/<span class="code">##ESPR ERR
 &lt;grund&gt;</span>, abgeschlossen durch eine Zeile
