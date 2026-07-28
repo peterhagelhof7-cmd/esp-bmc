@@ -113,6 +113,7 @@
   <div class="toc-row"><a href="#sec8">8. SNMP &amp; Zabbix</a></div>
   <div class="toc-row"><a href="#sec9">9. USB-Kommandozeile</a></div>
   <div class="toc-row"><a href="#sec10">10. Verdrahtung (Kurzreferenz)</a></div>
+  <div class="toc-row"><a href="#sec11">11. PC-Konsole bereitstellen (Serienkonsolen-Bridge)</a></div>
   <div class="toc-row"><a href="#sec-anhang">Anhang: Troubleshooting</a></div>
 </div>
 
@@ -687,6 +688,53 @@ wichtigsten Punkte.</p>
   Power-ORing-Schaltung droht eine Rückspeisung in USB-Host-Controller
   oder ATX-Netzteil. Vollständige Herleitung:
   <span class="code">docs/verdrahtungsplan.html</span> Abschnitt 2.
+</div>
+
+<!-- ============================================================ -->
+<!-- ============================================================ -->
+<h1 class="section" id="sec11"><span class="num">11</span>PC-Konsole bereitstellen (Serienkonsolen-Bridge)</h1>
+<p>Der ESP-BMC stellt dem gesteuerten PC seinen nativen USB als seriellen
+Konsolenkanal bereit (Port&nbsp;B, siehe Abschnitt&nbsp;1.1). Windows <b>bedient
+diesen Port aber nicht von selbst</b> — ein COM-Port ist passiv. Damit die
+Web-/SSH-Konsole des ESP-BMC eine echte Konsole des gesteuerten PCs zeigt, muss
+auf dem PC ein kleiner Dienst laufen, der den Port öffnet und eine Shell darüber
+bereitstellt (vergleichbar mit einem <span class="code">getty</span> unter Linux).</p>
+<p>Dafür liegt <span class="code">tools/Install-EspBmcConsole.ps1</span> bei. Das
+Skript wird <b>einmal pro PC als Administrator</b> ausgeführt und richtet eine
+geplante Aufgabe ein, die bei <b>jedem Systemstart</b> (als
+<span class="code">SYSTEM</span>, schon vor dem Login) eine zeilenbasierte
+PowerShell-Konsole über die serielle Schnittstelle des ESP-BMC bereitstellt.</p>
+<pre class="code-block"># In einer Administrator-PowerShell:
+cd tools
+.\Install-EspBmcConsole.ps1</pre>
+
+<h2>11.1 Merkmale</h2>
+<ul>
+  <li><b>Portsuche über die USB-ID</b> (<span class="code">VID_303A&amp;PID_1001</span>,
+  nativer USB des ESP-BMC) statt einer festen COM-Nummer — funktioniert daher auf
+  jedem PC unabhängig von der vergebenen COM-Nummer.</li>
+  <li><b>Automatischer Reconnect</b>: hängt sich neu an, sobald der Port nach einem
+  ESP-Reboot oder Umstecken wieder erscheint.</li>
+  <li><b>Läuft dauerhaft</b> als geplante Aufgabe „ESP-BMC Serial Console" (Trigger
+  Systemstart, Neustart bei Fehler, kein Zeitlimit). Log:
+  <span class="code">%ProgramData%\ESP-BMC-Console\bridge.log</span>.</li>
+</ul>
+<p>Entfernen: <span class="code">.\Install-EspBmcConsole.ps1 -Deinstallieren</span></p>
+
+<div class="callout warn">
+  <div class="callout-title">Sicherheit: SYSTEM-Konsole</div>
+  Die Bridge bietet als <span class="code">SYSTEM</span> vollen PowerShell-Zugriff
+  auf den PC an <b>jeden, der die serielle ESP-BMC-Schnittstelle erreicht</b> —
+  geschützt ausschließlich durch die (authentifizierte) Web-/SSH-Konsole des
+  ESP-BMC, genau wie bei einem Hardware-BMC. Nur in zugangsgeschützten Umgebungen
+  einsetzen.
+</div>
+<div class="callout">
+  <div class="callout-title">Ausgabe zuverlässig über die SSH-Konsole</div>
+  Die Konsolenausgabe erreicht dich am zuverlässigsten über die
+  <b>SSH-Konsole</b> (Abschnitt&nbsp;6), da diese den seriellen Kanal direkt
+  durchreicht: getippte PowerShell-Zeilen (mit Enter) werden auf dem gesteuerten
+  PC ausgeführt, die Ausgabe kommt über denselben Kanal zurück.
 </div>
 
 <!-- ============================================================ -->
