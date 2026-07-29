@@ -50,9 +50,24 @@ QueueHandle_t usb_manager_get_cdc_rx_queue(void);
 // bereits bestehende s_ws_console_fd-Muster.
 typedef enum { CONSOLE_OWNER_NONE, CONSOLE_OWNER_WEB, CONSOLE_OWNER_SSH } console_owner_t;
 
-void usb_manager_console_claim(console_owner_t owner);
-// Setzt den Besitzer nur zurueck, wenn "owner" gerade tatsaechlich haelt -
-// verhindert, dass eine beendete Sitzung versehentlich eine inzwischen
-// neu uebernommene Sitzung eines anderen Kanals wieder freigibt.
-void usb_manager_console_release(console_owner_t owner);
+// Uebernimmt die (einzige) Konsole fuer "owner" und liefert eine eindeutige,
+// monoton steigende Generation zurueck. Jeder claim VERDRAENGT den bisherigen
+// Besitzer (Takeover): die vorige Sitzung erkennt den Verlust ueber
+// usb_manager_console_is_current(gen) == false und beendet sich selbst.
+uint32_t usb_manager_console_claim(console_owner_t owner);
+
+// true, solange die zu "gen" gehoerende Sitzung noch die aktive Konsole ist
+// (kein spaeterer claim hat uebernommen und der Slot ist nicht freigegeben).
+bool usb_manager_console_is_current(uint32_t gen);
+
+// Gibt die Konsole frei - aber nur, wenn "gen" noch die aktuelle Generation
+// ist. Eine bereits verdraengte (veraltete) Sitzung raeumt so nicht dem
+// inzwischen aktiven Nachfolger den Slot weg.
+void usb_manager_console_release(uint32_t gen);
+
 console_owner_t usb_manager_console_owner(void);
+
+// Baut einen kurzen Begruessungs-/Status-Text (Uptime, Temperaturen,
+// Tastschutz/Freigabe der Taster, ...) fuer die serielle Konsole zusammen.
+// Zeilen mit CRLF terminiert (SSH-PTY). Schreibt hoechstens len-1 Bytes.
+void usb_manager_build_status_banner(char* buf, size_t len);

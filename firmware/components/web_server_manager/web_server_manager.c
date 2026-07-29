@@ -31,6 +31,10 @@ static const char* TAG = "web_server_manager";
 
 static httpd_handle_t s_server;
 static int s_ws_console_fd = -1;
+// Generation der aktuellen Web-Konsolen-Sitzung (usb_manager-Takeover-Modell):
+// wird bei jedem Verbindungsaufbau neu gesetzt; uebernimmt eine SSH-Sitzung die
+// Konsole, ist diese Generation nicht mehr "current" und der Pump haelt an.
+static uint32_t s_ws_console_gen = 0;
 
 // ---------------------------------------------------------------------
 // Hilfsfunktionen: Cookie-/Formular-Parsing
@@ -299,7 +303,12 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
   // Einstellungen-Seite versteckt. Dient dem Nutzer zur
   // Out-of-Band-Pruefung vor dem allerersten SSH-Connect
   // (Trust-on-First-Use).
-  char ssh_host_card[400];
+  // 640 statt 400: die Host-Public-Key-Zeile (ssh_manager_get_host_public_key_line)
+  // ist bis zu 300 Byte lang; mit dem statischen Kartentext + Fingerprint sprengte
+  // sie die alten 400 Byte, sodass snprintf mitten in der Zeile abschnitt und das
+  // schliessende </textarea></div> verlorenging - das offene <textarea> zerlegte
+  // dann den gesamten Seitenrest (E-Mail- UND SSH-Key-Upload-Karte).
+  char ssh_host_card[640];
   snprintf(ssh_host_card, sizeof(ssh_host_card),
            "<div class=\"card\"><b>SSH-Host-Key</b><br>"
            "Zur Pruefung vor der ersten Verbindung (nicht vertraulich):<br>"
@@ -327,7 +336,10 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
            "</form></div>",
            notify_enabled ? "checked" : "", notify_email);
 
-  char final_page[4800];
+  // 6144: die zusammengesetzte Seite lag mit ~4 KB bereits nah an der alten
+  // 4800-Grenze; Reserve gegen stilles snprintf-Abschneiden (httpd-Task-Stack
+  // ist 24576 B, siehe Stack-Fix - der groessere Puffer passt bequem).
+  char final_page[6144];
   snprintf(final_page, sizeof(final_page),
            "<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"utf-8\">"
            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -775,6 +787,19 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       "<button type=\"submit\">Uebernehmen</button>"
       "</form></div>"
 
+      "<div class=\"card\"><h2>Sensor-Schwellwerte</h2>"
+      "<p>Obergrenzen fuer die Alarmierung; eine Ueberschreitung loest die Benachrichtigung "
+      "(Syslog/SMTP oben) aus.</p>"
+      "<form method=\"post\" action=\"/settings/thresholds\">"
+      "<label>NTC-Temperatur max (&deg;C)</label>"
+      "<input type=\"number\" step=\"0.1\" name=\"ntc_max\" value=\"%.1f\" required>"
+      "<label>DHT11-Temperatur max (&deg;C)</label>"
+      "<input type=\"number\" step=\"0.1\" name=\"dht_max\" value=\"%.1f\" required>"
+      "<label>DHT11-Luftfeuchte max (%%)</label>"
+      "<input type=\"number\" step=\"0.1\" name=\"hum_max\" value=\"%.1f\" required>"
+      "<button type=\"submit\">Uebernehmen</button>"
+      "</form></div>"
+
       "<div class=\"card\"><h2>Taster-Steuerung</h2>"
       "<form method=\"post\" action=\"/settings/taster\" style=\"display:inline-block;margin-right:0.5rem;\">"
       "<input type=\"hidden\" name=\"action\" value=\"power_push\">%s"
@@ -834,7 +859,9 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       is_static ? " selected" : "", cur_ip, cur_mask, cur_gw, scan_html,
       wg_details, users_html, snmp_community,
       snmp_rw_community, syslog_server, (unsigned)syslog_port, smtp_server, (unsigned)smtp_port, smtp_sender,
-      smtp_username, taster_pw_html, taster_pw_html, taster_pw_html, tastschutz_checked, power_led_checked,
+      smtp_username, config_manager_get_ntc_temp_max_c(), config_manager_get_dht_temp_max_c(),
+      config_manager_get_dht_humidity_max_pct(), taster_pw_html, taster_pw_html, taster_pw_html,
+      tastschutz_checked, power_led_checked,
       hdd_led_checked, ota_card, device_type, ota_manager_get_version(), device_name);
 
   httpd_resp_set_type(req, "text/html");
@@ -1192,6 +1219,35 @@ static esp_err_t settings_snmp_post_handler(httpd_req_t* req) {
   bool ok = snmp_manager_set_community(community) && snmp_manager_set_rw_community(rw_community);
   ESP_LOGI(TAG, "%s hat die SNMP-Communities geaendert: %s", username, ok ? "erfolgreich" : "fehlgeschlagen");
   redirect_to(req, ok ? "/settings" : "/settings?failed=snmp");
+  return ESP_OK;
+}
+
+// Sensor-Schwellwerte (Alarm-Obergrenzen fuer Syslog/SMTP) - Rolle Verwalter,
+// analog zum SNMP-Handler. Setter siehe config_manager.h.
+static esp_err_t settings_thresholds_post_handler(httpd_req_t* req) {
+  char username[32];
+  user_role_t role;
+  if (!require_role(req, USER_ROLE_VERWALTER, username, &role)) return ESP_OK;
+
+  char body[128] = {0};
+  size_t to_read = req->content_len < sizeof(body) - 1 ? req->content_len : sizeof(body) - 1;
+  int received = httpd_req_recv(req, body, to_read);
+  if (received <= 0) return ESP_FAIL;
+  body[received] = '\0';
+
+  char ntc[16], dht[16], hum[16];
+  parse_form_field(body, "ntc_max", ntc, sizeof(ntc));
+  parse_form_field(body, "dht_max", dht, sizeof(dht));
+  parse_form_field(body, "hum_max", hum, sizeof(hum));
+
+  bool ok = ntc[0] && dht[0] && hum[0];
+  if (ok) {
+    config_manager_set_ntc_temp_max_c((float)atof(ntc));
+    config_manager_set_dht_temp_max_c((float)atof(dht));
+    config_manager_set_dht_humidity_max_pct((float)atof(hum));
+  }
+  ESP_LOGI(TAG, "%s hat die Sensor-Schwellwerte geaendert: %s", username, ok ? "erfolgreich" : "unvollstaendig");
+  redirect_to(req, ok ? "/settings" : "/settings?failed=thresholds");
   return ESP_OK;
 }
 
@@ -1615,8 +1671,9 @@ static esp_err_t ws_console_handler(httpd_req_t* req) {
     if (!require_role(req, USER_ROLE_SSH_USER, username, &role)) return ESP_OK;
 
     s_ws_console_fd = httpd_req_to_sockfd(req);
-    usb_manager_console_claim(CONSOLE_OWNER_WEB);
-    ESP_LOGI(TAG, "WebSocket-Konsole verbunden (fd=%d, %s)", s_ws_console_fd, username);
+    s_ws_console_gen = usb_manager_console_claim(CONSOLE_OWNER_WEB);
+    ESP_LOGI(TAG, "WebSocket-Konsole verbunden (fd=%d, %s, Generation %u)", s_ws_console_fd, username,
+             s_ws_console_gen);
     return ESP_OK;
   }
 
@@ -1639,15 +1696,24 @@ static esp_err_t ws_console_handler(httpd_req_t* req) {
 static void console_pump_task(void* arg) {
   (void)arg;
   QueueHandle_t rx_queue = usb_manager_get_cdc_rx_queue();
-  uint8_t buf[128];
+  uint8_t buf[512];
+  uint32_t bannered_gen = 0;  // fuer welche Generation der Begruessungs-Banner schon gesendet wurde
 
   for (;;) {
-    // Nur leeren, solange die Web-Konsole den gemeinsamen CDC-Kanal
-    // tatsaechlich haelt - sonst wuerde eine parallele SSH-Sitzung (P7)
-    // um dieselben Bytes konkurrieren (usb_manager_console_*).
-    if (usb_manager_console_owner() != CONSOLE_OWNER_WEB) {
+    // Nur leeren, solange DIESE Web-Konsolen-Sitzung die aktive Konsole ist -
+    // uebernimmt eine SSH-Sitzung (Takeover), ist die Generation nicht mehr
+    // "current" und der Pump pausiert, bis der Client neu verbindet.
+    if (!usb_manager_console_is_current(s_ws_console_gen)) {
       vTaskDelay(pdMS_TO_TICKS(50));
       continue;
+    }
+    // Begruessungs-/Status-Banner einmalig je neuer Sitzung.
+    if (s_ws_console_gen != bannered_gen && s_ws_console_fd >= 0) {
+      char banner[512];
+      usb_manager_build_status_banner(banner, sizeof(banner));
+      httpd_ws_frame_t bf = {.type = HTTPD_WS_TYPE_TEXT, .payload = (uint8_t*)banner, .len = strlen(banner)};
+      httpd_ws_send_frame_async(s_server, s_ws_console_fd, &bf);
+      bannered_gen = s_ws_console_gen;
     }
     size_t n = 0;
     uint8_t byte;
@@ -1657,6 +1723,10 @@ static void console_pump_task(void* arg) {
     if (n > 0 && s_ws_console_fd >= 0) {
       httpd_ws_frame_t frame = {.type = HTTPD_WS_TYPE_TEXT, .payload = buf, .len = n};
       httpd_ws_send_frame_async(s_server, s_ws_console_fd, &frame);
+      // Kurz an IDLE abgeben: bei fliessender Host-Ausgabe kehrt xQueueReceive
+      // oben sofort zurueck (Queue nie leer) -> ohne Yield wuerde der Pump IDLE0
+      // aushungern (Task-Watchdog-Panik, gleiche Empfindlichkeit wie SSH).
+      vTaskDelay(1);
     }
   }
 }
@@ -1715,6 +1785,8 @@ void web_server_manager_init(void) {
       .uri = "/settings/users/delete", .method = HTTP_POST, .handler = settings_users_delete_post_handler};
   httpd_uri_t settings_snmp_post = {
       .uri = "/settings/snmp", .method = HTTP_POST, .handler = settings_snmp_post_handler};
+  httpd_uri_t settings_thresholds_post = {
+      .uri = "/settings/thresholds", .method = HTTP_POST, .handler = settings_thresholds_post_handler};
   httpd_uri_t settings_notify_post = {
       .uri = "/settings/notify", .method = HTTP_POST, .handler = settings_notify_post_handler};
   httpd_uri_t settings_system_post = {
@@ -1756,6 +1828,7 @@ void web_server_manager_init(void) {
   httpd_register_uri_handler(s_server, &settings_users_post);
   httpd_register_uri_handler(s_server, &settings_users_delete_post);
   httpd_register_uri_handler(s_server, &settings_snmp_post);
+  httpd_register_uri_handler(s_server, &settings_thresholds_post);
   httpd_register_uri_handler(s_server, &settings_notify_post);
   httpd_register_uri_handler(s_server, &settings_system_post);
   httpd_register_uri_handler(s_server, &settings_config_download);

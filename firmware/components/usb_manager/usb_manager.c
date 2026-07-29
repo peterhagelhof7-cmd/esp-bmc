@@ -748,11 +748,60 @@ void usb_manager_cdc_write(const uint8_t* data, size_t len) {
 QueueHandle_t usb_manager_get_cdc_rx_queue(void) { return s_cdc_rx_queue; }
 
 static volatile console_owner_t s_console_owner = CONSOLE_OWNER_NONE;
+// Monoton steigend, identifiziert die jeweils aktive Konsolen-Sitzung. Jeder
+// claim erhoeht sie -> eine verdraengte Sitzung erkennt am Generationswechsel,
+// dass sie nicht mehr die aktuelle ist (Takeover ohne separaten Kick-Kanal).
+static volatile uint32_t s_console_generation = 0;
 
-void usb_manager_console_claim(console_owner_t owner) { s_console_owner = owner; }
+uint32_t usb_manager_console_claim(console_owner_t owner) {
+  s_console_owner = owner;
+  return ++s_console_generation;
+}
 
-void usb_manager_console_release(console_owner_t owner) {
-  if (s_console_owner == owner) s_console_owner = CONSOLE_OWNER_NONE;
+bool usb_manager_console_is_current(uint32_t gen) {
+  return s_console_owner != CONSOLE_OWNER_NONE && s_console_generation == gen;
+}
+
+void usb_manager_console_release(uint32_t gen) {
+  if (s_console_generation == gen) s_console_owner = CONSOLE_OWNER_NONE;
 }
 
 console_owner_t usb_manager_console_owner(void) { return s_console_owner; }
+
+void usb_manager_build_status_banner(char* buf, size_t len) {
+  char devname[32];
+  config_manager_get_device_name(devname, sizeof(devname));
+
+  int64_t up = esp_timer_get_time() / 1000000;
+  int uh = (int)(up / 3600), um = (int)((up % 3600) / 60), us = (int)(up % 60);
+
+  float ntc = 0, dht_t = 0, dht_h = 0;
+  bool ntc_ok = sensor_manager_get_ntc_temp_c(&ntc);
+  bool dht_ok = sensor_manager_get_dht_temp_c(&dht_t) && sensor_manager_get_dht_humidity_pct(&dht_h);
+  char ntc_s[20], dht_s[36];
+  if (ntc_ok) {
+    snprintf(ntc_s, sizeof(ntc_s), "%.1f C", ntc);
+  } else {
+    snprintf(ntc_s, sizeof(ntc_s), "n/v");
+  }
+  if (dht_ok) {
+    snprintf(dht_s, sizeof(dht_s), "%.1f C / %.0f %% rH", dht_t, dht_h);
+  } else {
+    snprintf(dht_s, sizeof(dht_s), "n/v");
+  }
+
+  bool tastschutz = config_manager_is_tastschutz_active();
+  bool power_led = gpio_manager_read_power_led();
+
+  snprintf(buf, len,
+           "\r\n=== ESP-BMC \"%s\" - serielle Konsole zum Host ===\r\n"
+           "Uptime BMC : %dh %02dm %02ds\r\n"
+           "NTC-Temp   : %s\r\n"
+           "DHT11      : %s\r\n"
+           "Host-Power : %s\r\n"
+           "Taster     : Power/Reset %s\r\n"
+           "--- ab hier: serielle Ausgabe des angeschlossenen PCs ---\r\n\r\n",
+           devname, uh, um, us, ntc_s, dht_s,
+           power_led ? "an (Power-LED aktiv)" : "aus / nicht erkannt",
+           tastschutz ? "GESPERRT (Tastschutz aktiv)" : "freigeschaltet");
+}
