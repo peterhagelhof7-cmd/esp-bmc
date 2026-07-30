@@ -9,14 +9,17 @@ Ablauf:
   3. WireGuard-Konfiguration importieren? (.conf im aktuellen Ordner suchen)
   4. WLAN konfigurieren? (Scan + Auswahl + PSK)
 
-Noch nicht umgesetzt (siehe docs/entscheidungen.md): Download von
-Firmware/Vorlage aus einem Git-Remote - es existiert noch keins, das
-Skript arbeitet bislang mit dem lokalen Checkout (-EnvName/-Template
-zeigen bei Bedarf auf etwas anderes).
+Wurde nur diese eine Datei heruntergeladen (nicht der vollstaendige
+Checkout), klont dieses Skript das Repository selbst nach -RepoPath
+(Default: Ordner "ESP-BMC" neben dem Skript) - identisches Muster wie in
+sensormeter/scripts/flash.ps1 bzw. ESP-Anwesenheit/scripts/flash.ps1.
 
 .EXAMPLE
 .\Setup.ps1
 .\Setup.ps1 -Port COM7 -SkipFlash
+
+.EXAMPLE
+.\Setup.ps1 -RepoPath C:\Projekte\ESP-BMC
 #>
 
 param(
@@ -25,18 +28,66 @@ param(
     [string]$EnvName = "esp32-s3-devkitc-1-n16r8",
     [string]$Template,
     [string]$Username = "admin",
-    [string]$Password = "admin"
+    [string]$Password = "admin",
+    [string]$RepoPath
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+$RepoUrl = "https://github.com/peterhagelhof7-cmd/esp-bmc.git"
+
 $ToolsDir = $PSScriptRoot
 $RepoRoot = Split-Path $ToolsDir -Parent
 $FirmwareDir = Join-Path $RepoRoot "firmware"
+$linkModule = Join-Path $ToolsDir "EspBmcLink.psm1"
+
+# tools\EspBmcLink.psm1 wird JEDEN Lauf gebraucht (unconditional
+# Import-Module unten) - fehlt sie, steckt dieses Skript nicht in einem
+# vollstaendigen Checkout (z.B. nur Setup.ps1 allein heruntergeladen,
+# per Rechtsklick "Speichern unter" von GitHub). In dem Fall komplettes
+# Repository klonen (bzw. bei vorhandenem Checkout aktualisieren) statt
+# mit einer kryptischen Import-Module-Fehlermeldung mitten in der
+# interaktiven Sitzung abzubrechen.
+if (-not (Test-Path $linkModule)) {
+  if (-not $RepoPath) { $RepoPath = Join-Path $ToolsDir "ESP-BMC" }
+
+  if (Test-Path (Join-Path $RepoPath "tools\EspBmcLink.psm1")) {
+    Write-Host "Vorhandener Checkout gefunden unter $RepoPath"
+    $status = git -C $RepoPath status --porcelain
+    if ([string]::IsNullOrWhiteSpace($status)) {
+      Write-Host "Keine lokalen Aenderungen - hole neueste Version (git pull)..."
+      git -C $RepoPath pull
+    } else {
+      Write-Host "Lokale Aenderungen im Checkout gefunden - ueberspringe git pull." -ForegroundColor Yellow
+    }
+  } else {
+    Write-Host "Kein vollstaendiger Checkout gefunden - klone Repository nach $RepoPath ..."
+    git clone $RepoUrl $RepoPath
+    if ($LASTEXITCODE -ne 0) {
+      throw "git clone fehlgeschlagen (Exitcode $LASTEXITCODE) - ist Git installiert?"
+    }
+  }
+
+  $ToolsDir = Join-Path $RepoPath "tools"
+  $RepoRoot = $RepoPath
+  $FirmwareDir = Join-Path $RepoRoot "firmware"
+  $linkModule = Join-Path $ToolsDir "EspBmcLink.psm1"
+}
+
 if (-not $Template) { $Template = Join-Path $ToolsDir "config_template.txt" }
 
-Import-Module (Join-Path $ToolsDir "EspBmcLink.psm1") -Force
+if (-not (Test-Path $linkModule)) {
+  throw "tools\EspBmcLink.psm1 wurde auch nach dem Checkout nicht gefunden - stimmt der Projekt-Root ($RepoRoot)?"
+}
+if (-not $SkipFlash -and -not (Test-Path (Join-Path $FirmwareDir "platformio.ini"))) {
+  throw "firmware\platformio.ini wurde auch nach dem Checkout nicht gefunden (oder -SkipFlash verwenden, falls nur konfiguriert werden soll)."
+}
+if (-not (Test-Path $Template)) {
+  throw "Konfigurationsvorlage nicht gefunden: $Template (oder -Template auf eine vorhandene Datei zeigen lassen)."
+}
+
+Import-Module $linkModule -Force
 
 # [double]$str verwendet die aktuelle System-Kultur - unter de-DE wird
 # "60,5" NICHT als Fehler abgelehnt, sondern lautlos als 605 (Komma als

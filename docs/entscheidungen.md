@@ -1112,6 +1112,43 @@ Auf Wunsch noch keine Nutzungsdokumentation geschrieben (nur dieser
 Entscheidungslog-Eintrag) - Skripte sind selbsterklaerend genug fuer den
 Moment (Kommentare + `Get-Help Setup.ps1`).
 
+## 2026-07-30 — Nachtrag: Setup.ps1 klont sich jetzt selbst (Remote existiert inzwischen)
+
+Der obige Punkt ("Kein Git-Remote-Download... Nachtrag faellig, sobald ein
+Remote existiert") ist ueberholt - ein oeffentliches Remote
+(`github.com/peterhagelhof7-cmd/esp-bmc`) existiert inzwischen und ist
+aktuell (`main`, mit `origin/main` synchron).
+
+Anlass: bei den Geschwister-/Nachbarprojekten (sensormeter-Familie,
+ESP-Anwesenheit) wurde derselbe Fehler real gemeldet - ein Nutzer hatte nur
+das jeweilige Flash-Skript einzeln von GitHub heruntergeladen (nicht den
+vollstaendigen Checkout), das Skript brach darauf mit einer Fehlermeldung
+ueber ein fehlendes Firmware-Verzeichnis ab. `Setup.ps1` hatte dieselbe
+Anfaelligkeit (`$RepoRoot = Split-Path $ToolsDir -Parent`, keine Pruefung),
+plus eine weitere: `Import-Module (Join-Path $ToolsDir "EspBmcLink.psm1")`
+haette bei einem alleine heruntergeladenen `Setup.ps1` noch VOR jeder
+eigenen Fehlerbehandlung mit einer rohen PowerShell-Exception abgebrochen.
+
+Fix: findet `Setup.ps1` `tools\EspBmcLink.psm1` nicht neben sich, klont es
+das Repository selbst nach `-RepoPath` (Default: Ordner "ESP-BMC" neben dem
+Skript) - identisches Muster wie in `sensormeter/scripts/flash.ps1` bzw.
+`ESP-Anwesenheit/scripts/flash.ps1` (`git clone` falls kein Checkout
+vorhanden, sonst `git pull` bei sauberem Arbeitsstand). Nach dem
+(Re-)Checkout werden `tools\EspBmcLink.psm1`, `firmware\platformio.ini`
+(nur falls nicht `-SkipFlash`) und die Konfigurationsvorlage explizit mit
+klaren Fehlermeldungen geprueft, bevor `Import-Module` ueberhaupt
+aufgerufen wird.
+
+Real getestet (nicht nur gelesen): `Setup.ps1` allein in ein leeres
+Verzeichnis kopiert (exakt das bei den Geschwisterprojekten gemeldete
+Szenario nachgestellt) und mit `-SkipFlash -Port <nicht existierender Port>`
+ausgefuehrt - klont automatisch nach `tools\ESP-BMC\`, beide Pruefdateien
+danach vorhanden, Skript laeuft bis zum erwarteten (spaeteren) Fehler beim
+Oeffnen des nicht existierenden COM-Ports durch - kein fruehzeitiger Absturz
+mehr. Zusaetzlich verifiziert: aus dem echten, bestehenden Checkout heraus
+loest die neue Pruefung NICHT faelschlich aus (kein unnoetiges Klonen/
+Pull-Rauschen im Normalfall).
+
 ## 2026-07-17 — Nachtrag Setup-Tooling: Inkonsistenzen gefunden und behoben
 
 Auf Nutzeranfrage die eben fertiggestellten Tooling-Dateien nochmal
