@@ -101,7 +101,6 @@ while ($true) {
         $port.DtrEnable  = $true      # signalisiert dem ESP "Host verbunden"
         $port.RtsEnable  = $false
         $port.ReadTimeout = 500
-        $port.NewLine    = "`n"
         $port.Open()
         Write-Log "Verbunden auf $com."
 
@@ -109,25 +108,49 @@ while ($true) {
         $port.Write("`r`n=== ESP-BMC-Konsole auf $env:COMPUTERNAME ($([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)) - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===`r`n")
         $port.Write((& $prompt))
 
+        # Zeilen ZEICHENWEISE einlesen: CR, LF ODER CRLF gelten als Zeilenende.
+        # Wichtig: PuTTY sendet bei Enter nur ein CR - ReadLine() mit NewLine=LF
+        # wuerde die Zeile nie abschliessen (-> "nur Banner, kein Prompt"-Bug).
+        # Zusaetzlich lokales Echo (Nutzer sieht seine Eingabe) + Backspace.
+        $sb = New-Object System.Text.StringBuilder
+        $skipLf = $false
         while ($port.IsOpen) {
-            try { $line = $port.ReadLine() }
+            try { $ch = $port.ReadChar() }
             catch [TimeoutException] { continue }        # nur Leerlauf -> Port-Status weiter pruefen
             catch { throw }                               # echter I/O-Fehler -> reconnect
+            $c = [char]$ch
 
-            $line = $line.Trim("`r", "`n", ' ')
-            if ($line -eq '') { $port.Write((& $prompt)); continue }
-            if ($line -in @('exit', 'quit', 'logout')) {
-                $port.Write("(Konsole bleibt bestehen)`r`n" + (& $prompt)); continue
+            if ($c -eq "`n" -and $skipLf) { $skipLf = $false; continue }  # LF direkt nach CR schlucken (CRLF)
+            $skipLf = $false
+
+            if ($c -eq "`r" -or $c -eq "`n") {           # Zeilenende (egal ob CR, LF oder CRLF)
+                if ($c -eq "`r") { $skipLf = $true }
+                $line = $sb.ToString().Trim(" `t")
+                [void]$sb.Clear()
+                $port.Write("`r`n")                       # Zeilenumbruch-Echo
+                if ($line -eq '') { $port.Write((& $prompt)); continue }
+                if ($line -in @('exit', 'quit', 'logout')) {
+                    $port.Write("(Konsole bleibt bestehen)`r`n" + (& $prompt)); continue
+                }
+                try {
+                    $out = Invoke-Expression $line 2>&1 | Out-String
+                } catch {
+                    $out = "FEHLER: " + $_.Exception.Message + "`r`n"
+                }
+                # LF -> CRLF fuer saubere Terminaldarstellung
+                $out = ($out -replace "`r`n", "`n") -replace "`n", "`r`n"
+                $port.Write($out)
+                $port.Write((& $prompt))
+                continue
             }
-            try {
-                $out = Invoke-Expression $line 2>&1 | Out-String
-            } catch {
-                $out = "FEHLER: " + $_.Exception.Message + "`r`n"
+
+            if ($c -eq [char]8 -or $c -eq [char]127) {    # Backspace / DEL
+                if ($sb.Length -gt 0) { [void]$sb.Remove($sb.Length - 1, 1); $port.Write("`b `b") }
+                continue
             }
-            # LF -> CRLF fuer saubere Terminaldarstellung
-            $out = ($out -replace "`r`n", "`n") -replace "`n", "`r`n"
-            $port.Write($out)
-            $port.Write((& $prompt))
+
+            [void]$sb.Append($c)
+            $port.Write($c)                               # lokales Echo des Zeichens
         }
     } catch {
         Write-Log ("Fehler/Trennung: " + $_.Exception.Message)
@@ -151,6 +174,15 @@ $null = [System.Management.Automation.Language.Parser]::ParseFile($BridgePath, [
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
+
+# Evtl. noch laufende Bridge-Prozesse beenden (auch verwaiste ohne Task),
+# damit der neue Prozess den COM-Port sauber uebernehmen kann.
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match 'EspBmcConsoleBridge\.ps1' } |
+    ForEach-Object {
+        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop; Write-Host "  Alten Bridge-Prozess (PID $($_.ProcessId)) beendet." }
+        catch { Write-Host "  Konnte Bridge-Prozess (PID $($_.ProcessId)) nicht beenden: $($_.Exception.Message)" -ForegroundColor Yellow }
+    }
 
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$BridgePath`""

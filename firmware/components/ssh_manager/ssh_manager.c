@@ -378,6 +378,7 @@ static void handle_session(int client_fd, const char* client_ip) {
   QueueHandle_t rx_queue = usb_manager_get_cdc_rx_queue();
   byte iobuf[512];  // groesser, damit der 1-Tick-Yield unten den Ausgabedurchsatz nicht ausbremst
   TickType_t last_activity = xTaskGetTickCount();
+  bool prev_cr = false;  // fuer die CR/CRLF->LF-Normalisierung der Client-Eingabe (siehe unten)
 
   // Shell-Channel ermitteln - er steht nach erfolgreichem Handshake bereits.
   // NICHT ueber "!= 0" pruefen: die serverseitige Channel-ID ist regulaer 0,
@@ -407,7 +408,30 @@ static void handle_session(int client_fd, const char* client_ip) {
       send_channel = channelId;
       have_channel = true;
       int n = wolfSSH_ChannelIdRead(ssh, channelId, iobuf, sizeof(iobuf));
-      if (n > 0) usb_manager_cdc_write(iobuf, (size_t)n);  // Client-Eingabe -> Host (SOL)
+      if (n > 0) {
+        // Zeilenenden der Client-Eingabe auf genau ein LF normalisieren, BEVOR
+        // sie an den Host gehen: PuTTY & Co. senden bei Enter nur ein CR (0x0D),
+        // die Host-Konsole (PowerShell ReadLine) erwartet aber LF (0x0A). Ohne
+        // diese Umsetzung wird die getippte Zeile beim Host nie abgeschlossen
+        // -> "nur Banner, kein Prompt, keine Reaktion auf Enter". CR, LF und
+        // CRLF (auch ueber Lesegrenzen hinweg via prev_cr) werden zu einem LF.
+        byte norm[sizeof(iobuf)];  // <= n Bytes: jedes Eingabebyte -> hoechstens ein Ausgabebyte
+        size_t m = 0;
+        for (int i = 0; i < n; i++) {
+          byte b = iobuf[i];
+          if (b == '\r') {
+            norm[m++] = '\n';
+            prev_cr = true;
+          } else if (b == '\n') {
+            if (!prev_cr) norm[m++] = '\n';  // einzelnes LF durchlassen, LF nach CR schlucken
+            prev_cr = false;
+          } else {
+            norm[m++] = b;
+            prev_cr = false;
+          }
+        }
+        if (m > 0) usb_manager_cdc_write(norm, m);  // normalisierte Client-Eingabe -> Host (SOL)
+      }
     } else if (wret == WS_EOF || wret == WS_SOCKET_ERROR_E) {
       break;
     }
