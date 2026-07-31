@@ -132,6 +132,11 @@ while ($true) {
                 if ($line -in @('exit', 'quit', 'logout')) {
                     $port.Write("(Konsole bleibt bestehen)`r`n" + (& $prompt)); continue
                 }
+                # ESP-IDF-Log-/Boot-Zeilen NICHT als Befehl ausfuehren - sie sickern
+                # ueber dieselbe USB-Serial-JTAG-Leitung in die Konsole (z.B.
+                # "I (983) esp_psram: ..."). Muster: <Level E/W/I/D/V> (<ms>) <Tag>:
+                # Still verwerfen (kein Prompt), da sie asynchron vom ESP kommen.
+                if ($line -match '^[EWIDV] \(\d+\)') { continue }
                 try {
                     $out = Invoke-Expression $line 2>&1 | Out-String
                 } catch {

@@ -33,6 +33,14 @@ CONFIG_USJ_ENABLE_USB_SERIAL_JTAG=y
 # kollidieren. Die primaere Konsole/Logs bleiben auf UART0 (CH343-Port).
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
+# Log-Verbosity auf WARN (statt Default INFO): Info-Boot-/Laufzeitmeldungen
+# (z.B. "I (983) esp_psram: Reserving pool ...") sickern in der Praxis trotz
+# UART0-Konsole auf den USJ-Datenkanal und verschmutzen die Host-Konsole. Auf
+# WARN entfallen die reinen Info-Zeilen; Warnungen/Fehler bleiben erhalten
+# (und werden host-seitig ohnehin als IDF-Log-Muster herausgefiltert). Wirkt
+# per OTA, da app-seitig (Bootloader-Log-Level waere nur per Flash aenderbar).
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+
 # WebServerManager (P5) - WebSocket-Konsole braucht das explizit, Default ist aus.
 CONFIG_HTTPD_WS_SUPPORT=y
 

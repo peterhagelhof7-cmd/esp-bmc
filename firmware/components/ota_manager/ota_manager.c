@@ -18,11 +18,23 @@ static const char* TAG = "ota_manager";
 #define CAPTURE_CAP 128  // > groesstmoegliches "<PROJECT_ID>:<VERSION>"
 #define TAIL_CAP 16      // > MARKER_PREFIX_LEN - 1
 
-// Nur ueber ota_manager_init()'s ESP_LOGI referenziert, damit der Linker
-// ihn nicht als unbenutzt wegoptimiert (der eigentliche Zweck ist, dass
-// dieser Byte-String im fertigen .bin auffindbar ist).
-static const char s_identity_marker[] =
+// Muss im fertigen .bin auffindbar bleiben (OTA-Selbstidentifikation).
+// __attribute__((used)) erzwingt das linkerunabhaengig von jeder Referenz -
+// FRUEHER hing das allein an ota_manager_init()'s ESP_LOGI; sobald der
+// Log-Level unter INFO gesenkt wurde (CONFIG_LOG_DEFAULT_LEVEL_WARN), wurde
+// dieses ESP_LOGI wegkompiliert, der Marker mit-wegoptimiert und JEDES OTA als
+// "kein Erkennungsmerkmal" abgelehnt. Daher jetzt explizit 'used'.
+static const char s_identity_marker[] __attribute__((used)) =
     MARKER_PREFIX FIRMWARE_PROJECT_ID ":" DEVICE_FIRMWARE_VERSION MARKER_SUFFIX;
+
+// Volatiler globaler Zeiger: ota_manager_init() legt hier die ADRESSE des
+// Markers ab. Der Store in einen volatilen Zeiger darf NICHT wegoptimiert werden
+// und die Adressnahme laesst sich - anders als s_identity_marker[0] (const ->
+// wird zu 'E' konstant-gefaltet) - nicht wegkonstantfalten; damit behaelt der
+// Linker den zusammenhaengenden Marker garantiert, log-levelunabhaengig. (Das
+// fruehere ESP_LOGI tat dies implizit ueber die Adressuebergabe und fiel bei
+// Log-Level < INFO weg.)
+static const char* volatile s_marker_keep_ptr;
 
 static esp_ota_handle_t s_ota_handle;
 static const esp_partition_t* s_update_partition;
@@ -217,7 +229,12 @@ static void scan_chunk_for_marker(const uint8_t* data, size_t len) {
   }
 }
 
-void ota_manager_init(void) { ESP_LOGI(TAG, "OtaManager bereit (%s)", s_identity_marker); }
+void ota_manager_init(void) {
+  // Erzwingt eine linkerfeste Referenz auf den Marker (siehe s_marker_keep_ptr):
+  // volatiler Store der Marker-ADRESSE, unabhaengig vom Log-Level.
+  s_marker_keep_ptr = s_identity_marker;
+  ESP_LOGI(TAG, "OtaManager bereit (%s)", s_identity_marker);
+}
 
 bool ota_manager_begin(bool allow_downgrade) {
   s_allow_downgrade = allow_downgrade;
