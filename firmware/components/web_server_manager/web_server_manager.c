@@ -1578,17 +1578,24 @@ static esp_err_t logs_sensors_csv_handler(httpd_req_t* req) {
   return ESP_OK;
 }
 
+// Sink fuer audit_log_stream(): reicht jeden Datei-Haeppchen als HTTP-Chunk
+// weiter. So wird das komplette Log ausgeliefert, statt wie frueher nur die
+// ersten 4 KB ab Dateianfang (dadurch "fror" das Log scheinbar ein, sobald es
+// ueber 4 KB wuchs - neue Eintraege haengen hinten und lagen jenseits des
+// Puffers).
+static bool audit_log_resp_sink(void* ctx, const char* data, size_t len) {
+  return httpd_resp_send_chunk((httpd_req_t*)ctx, data, len) == ESP_OK;
+}
+
 static esp_err_t logs_audit_download_handler(httpd_req_t* req) {
   char username[32];
   user_role_t role;
   if (!require_role(req, USER_ROLE_VERWALTER, username, &role)) return ESP_OK;
 
-  char content[4096];
-  size_t len = audit_log_read(content, sizeof(content));
-
   httpd_resp_set_type(req, "text/plain");
   httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"audit.log\"");
-  httpd_resp_send(req, content, len);
+  audit_log_stream(audit_log_resp_sink, req);
+  httpd_resp_send_chunk(req, NULL, 0);  // Chunked-Antwort abschliessen
   return ESP_OK;
 }
 

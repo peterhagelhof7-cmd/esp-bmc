@@ -60,3 +60,24 @@ size_t audit_log_read(char* out, size_t out_len) {
   out[n] = '\0';
   return n;
 }
+
+bool audit_log_stream(audit_log_sink_t sink, void* ctx) {
+  // Reihenfolge: erst die rotierte aeltere Datei, dann die aktuelle - so ist
+  // der Download chronologisch und vollstaendig, auch ueber eine Rotation
+  // hinweg. Kleiner Stack-Puffer, weil chunk-weise gesendet wird.
+  const char* files[] = {AUDIT_LOG_FILE_OLD, AUDIT_LOG_FILE};
+  char buf[512];
+  for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
+    FILE* f = fopen(files[i], "r");
+    if (!f) continue;  // .old existiert vor der ersten Rotation noch nicht
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+      if (!sink(ctx, buf, n)) {
+        fclose(f);
+        return false;
+      }
+    }
+    fclose(f);
+  }
+  return true;
+}
