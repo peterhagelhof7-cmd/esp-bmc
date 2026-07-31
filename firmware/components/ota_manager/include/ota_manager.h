@@ -48,3 +48,9 @@ bool ota_manager_identity_matches(void);
 bool ota_manager_version_allowed(void);
 
 const char* ota_manager_get_version(void);
+
+// Version aus dem Marker der zuletzt hochgeladenen .bin (Zielversion des
+// OTA-Updates), gueltig ab dem Erkennen des Markers waehrend des Uploads bis
+// zum naechsten ota_manager_begin(). Leerer String, solange kein Marker
+// erkannt wurde. Fuer die Protokollierung, welche Version geflasht wurde.
+const char* ota_manager_get_uploaded_version(void);

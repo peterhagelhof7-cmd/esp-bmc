@@ -317,6 +317,23 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
            "</div>",
            ssh_manager_get_host_key_fingerprint(), ssh_manager_get_host_public_key_line());
 
+  // SSH-Konsolen-Status: wird die serielle Konsole gerade ueber eine
+  // SSH-Sitzung genutzt und von wem/woher (Benutzername + Quell-IP).
+  char ssh_status_card[192];
+  {
+    char ssh_user[32], ssh_ip[16];
+    if (ssh_manager_get_active_console(ssh_user, sizeof(ssh_user), ssh_ip, sizeof(ssh_ip))) {
+      snprintf(ssh_status_card, sizeof(ssh_status_card),
+               "<div class=\"card\"><b>SSH-Konsole</b><br>"
+               "<span class=\"led on\"></span>aktiv genutzt von <b>%s</b> (%s)</div>",
+               ssh_user, ssh_ip);
+    } else {
+      snprintf(ssh_status_card, sizeof(ssh_status_card),
+               "<div class=\"card\"><b>SSH-Konsole</b><br>"
+               "<span class=\"led off\"></span>keine aktive Sitzung</div>");
+    }
+  }
+
   // E-Mail-Benachrichtigung: jeder Nutzer verwaltet seine eigene Adresse
   // + Aktiv-Schalter selbst (Selbstbedienung wie beim SSH-Key oben, aber
   // ohne Rollenbeschraenkung - fuer jede Rolle sinnvoll).
@@ -384,6 +401,7 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
            "%s"
            "%s"
            "%s"
+           "%s"
            "<div class=\"card\"><b>Einstellungen</b><br>"
            "<a href=\"/settings\">Zur Einstellungen-Seite</a></div>"
            "<div class=\"card\"><b>Logs</b><br>"
@@ -400,7 +418,7 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
            username, role_name(role), ssid, ip, ntp_str, wg_local_ip, wg_endpoint, wg_up ? "vpn-up" : "vpn-down",
            wg_up ? "verbunden" : "getrennt", ntc_str, dht_str, (long long)uptime_s, host_uptime_str,
            power_led_on ? "on" : "off", power_led_on ? "aktiv" : "inaktiv", hdd_led_recent ? "hdd-on" : "hdd-off",
-           hdd_led_recent ? "aktiv" : "inaktiv", ssh_host_card, notify_card, ssh_card);
+           hdd_led_recent ? "aktiv" : "inaktiv", ssh_status_card, ssh_host_card, notify_card, ssh_card);
 
   httpd_resp_set_type(req, "text/html");
   httpd_resp_send(req, final_page, HTTPD_RESP_USE_STRLEN);
@@ -1094,8 +1112,11 @@ static esp_err_t settings_ota_upload_post_handler(httpd_req_t* req) {
   bool ok = write_ok && ota_manager_end();
 
   if (ok) {
-    char event[80];
-    snprintf(event, sizeof(event), "OTA-Update erfolgreich (%s) durch %s", ota_manager_get_version(), username);
+    char event[96];
+    // Zielversion aus dem Marker der hochgeladenen .bin - NICHT die laufende
+    // (alte) Version, die die neue ja noch gar nicht kennt.
+    snprintf(event, sizeof(event), "OTA-Update erfolgreich (%s -> %s) durch %s", ota_manager_get_version(),
+             ota_manager_get_uploaded_version(), username);
     audit_log_add(event);
     ESP_LOGW(TAG, "%s", event);
     httpd_resp_set_type(req, "text/plain");

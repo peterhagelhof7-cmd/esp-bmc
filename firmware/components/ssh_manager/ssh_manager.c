@@ -220,9 +220,34 @@ const char* ssh_manager_get_host_public_key_line(void) { return s_public_key_lin
 
 typedef struct {
   char username[32];
+  char client_ip[16];  // Quell-IP, vor dem Handshake gesetzt - fuer die Login-Protokollierung
   user_role_t role;
   bool authenticated;
 } ssh_session_ctx_t;
+
+// Aktuell aktive SSH-Konsolen-Sitzung (fuer die Uebersichtsseite: "wird SSH
+// gerade genutzt und von wem"). Gesetzt beim Konsolen-Claim, geraeumt beim
+// Release - aber nur, wenn dieselbe Generation noch eingetragen ist, damit ein
+// abbauendes altes Session-Task bei einem Takeover nicht die Infos der neuen
+// Sitzung loescht. Schlichte globale Felder genuegen (ein einziger Konsumer der
+// Konsole zur Zeit, nur kurze Ueberlappung beim Takeover).
+static volatile bool s_console_active = false;
+static char s_console_user[32] = "";
+static char s_console_ip[16] = "";
+static uint32_t s_console_gen = 0;
+
+bool ssh_manager_get_active_console(char* user, size_t user_cap, char* ip, size_t ip_cap) {
+  if (!s_console_active) return false;
+  if (user && user_cap) {
+    strncpy(user, s_console_user, user_cap - 1);
+    user[user_cap - 1] = '\0';
+  }
+  if (ip && ip_cap) {
+    strncpy(ip, s_console_ip, ip_cap - 1);
+    ip[ip_cap - 1] = '\0';
+  }
+  return true;
+}
 
 static const char* role_name(user_role_t role) {
   switch (role) {
@@ -258,8 +283,9 @@ static int ws_user_auth(byte authType, WS_UserAuthData* authData, void* ctx) {
     sctx->role = role;
     sctx->authenticated = true;
 
-    char event[64];
-    snprintf(event, sizeof(event), "Login (SSH, Passwort): %s (%s)", username, role_name(role));
+    char event[96];
+    snprintf(event, sizeof(event), "Login (SSH, Passwort): %s (%s) von %s", username, role_name(role),
+             sctx->client_ip);
     audit_log_add(event);
     ESP_LOGI(TAG, "%s", event);
     return WOLFSSH_USERAUTH_SUCCESS;
@@ -285,8 +311,9 @@ static int ws_user_auth(byte authType, WS_UserAuthData* authData, void* ctx) {
     sctx->role = role;
     if (authData->sf.publicKey.hasSignature) {
       sctx->authenticated = true;
-      char event[64];
-      snprintf(event, sizeof(event), "Login (SSH, Public-Key): %s (%s)", username, role_name(role));
+      char event[96];
+      snprintf(event, sizeof(event), "Login (SSH, Public-Key): %s (%s) von %s", username, role_name(role),
+               sctx->client_ip);
       audit_log_add(event);
       ESP_LOGI(TAG, "%s", event);
     }
@@ -330,6 +357,7 @@ static void handle_session(int client_fd, const char* client_ip) {
   }
 
   ssh_session_ctx_t sctx = {0};
+  strncpy(sctx.client_ip, client_ip, sizeof(sctx.client_ip) - 1);  // vor dem Handshake fuer die Login-Protokollierung
   wolfSSH_SetUserAuthCtx(ssh, &sctx);
   wolfSSH_set_fd(ssh, client_fd);
 
@@ -374,6 +402,14 @@ static void handle_session(int client_fd, const char* client_ip) {
   uint32_t console_gen = usb_manager_console_claim(CONSOLE_OWNER_SSH);
   ESP_LOGI(TAG, "SSH-Konsole aktiv (uebernommen) fuer %s (%s) von %s, Generation %u", sctx.username,
            role_name(sctx.role), client_ip, console_gen);
+
+  // Aktive-Sitzung-Anzeige fuer die Uebersichtsseite setzen.
+  strncpy(s_console_user, sctx.username, sizeof(s_console_user) - 1);
+  s_console_user[sizeof(s_console_user) - 1] = '\0';
+  strncpy(s_console_ip, client_ip, sizeof(s_console_ip) - 1);
+  s_console_ip[sizeof(s_console_ip) - 1] = '\0';
+  s_console_gen = console_gen;
+  s_console_active = true;
 
   QueueHandle_t rx_queue = usb_manager_get_cdc_rx_queue();
   byte iobuf[512];  // groesser, damit der 1-Tick-Yield unten den Ausgabedurchsatz nicht ausbremst
@@ -469,9 +505,17 @@ static void handle_session(int client_fd, const char* client_ip) {
   }
 
   usb_manager_console_release(console_gen);
+  // Aktive-Sitzung-Anzeige nur raeumen, wenn seither KEINE neue Sitzung
+  // uebernommen hat (sonst wuerde dieses abbauende alte Task die Infos der
+  // neuen Sitzung ueberschreiben) - Vergleich ueber die Konsolen-Generation.
+  if (s_console_gen == console_gen) {
+    s_console_active = false;
+    s_console_user[0] = '\0';
+    s_console_ip[0] = '\0';
+  }
   ESP_LOGI(TAG, "SSH-Sitzung beendet: %s (%s)", sctx.username, client_ip);
-  char event[64];
-  snprintf(event, sizeof(event), "SSH-Sitzung beendet: %s", sctx.username);
+  char event[96];
+  snprintf(event, sizeof(event), "SSH-Sitzung beendet: %s von %s", sctx.username, client_ip);
   audit_log_add(event);
 
   wolfSSH_shutdown(ssh);

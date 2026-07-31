@@ -37,6 +37,11 @@ static size_t s_tail_len;
 static uint8_t s_capture_buf[CAPTURE_CAP];
 static size_t s_capture_len;
 
+// Aus dem Marker der HOCHGELADENEN .bin gelesene Version (nicht die laufende) -
+// fuer eine korrekte Protokollierung "OTA auf Version X" (die laufende Firmware
+// kennt ihre eigene Nachfolgeversion sonst nicht).
+static char s_uploaded_version[48];
+
 // Byte-sichere Teilstring-Suche (memmem ist auf picolibc nicht garantiert
 // verfuegbar) - bricht im Unterschied zu strstr() NICHT am ersten
 // eingebetteten Null-Byte ab.
@@ -119,6 +124,8 @@ static void handle_marker_payload(const uint8_t* payload, size_t len) {
   s_marker_found = true;
   s_identity_matches = strcmp(project_id, FIRMWARE_PROJECT_ID) == 0;
   s_version_allowed = s_allow_downgrade || compare_versions(version, DEVICE_FIRMWARE_VERSION) >= 0;
+  strncpy(s_uploaded_version, version, sizeof(s_uploaded_version) - 1);
+  s_uploaded_version[sizeof(s_uploaded_version) - 1] = '\0';
   ESP_LOGI(TAG, "Marker gefunden: Projekt=\"%s\" Version=\"%s\" (Identitaet %s, Version %s)", project_id, version,
            s_identity_matches ? "ok" : "FALSCH", s_version_allowed ? "erlaubt" : "ABGELEHNT");
 }
@@ -220,6 +227,7 @@ bool ota_manager_begin(bool allow_downgrade) {
   s_capturing = false;
   s_tail_len = 0;
   s_capture_len = 0;
+  s_uploaded_version[0] = '\0';
 
   s_update_partition = esp_ota_get_next_update_partition(NULL);
   if (!s_update_partition) {
@@ -271,3 +279,5 @@ bool ota_manager_identity_matches(void) { return s_identity_matches; }
 bool ota_manager_version_allowed(void) { return s_version_allowed; }
 
 const char* ota_manager_get_version(void) { return DEVICE_FIRMWARE_VERSION; }
+
+const char* ota_manager_get_uploaded_version(void) { return s_uploaded_version; }
