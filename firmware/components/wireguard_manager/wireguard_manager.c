@@ -31,6 +31,7 @@ static char s_local_netmask[16];
 static char s_endpoint_host[64];
 static int s_listen_port;
 static int s_endpoint_port;
+static int s_persistent_keepalive;
 
 typedef struct {
   char ip[16];
@@ -90,6 +91,7 @@ static bool parse_conf(const char* text) {
   s_private_key[0] = s_public_key[0] = s_local_address[0] = s_local_netmask[0] = s_endpoint_host[0] = '\0';
   s_listen_port = 51820;
   s_endpoint_port = 51820;
+  s_persistent_keepalive = 0;
 
   char line[256];
   size_t li = 0;
@@ -161,6 +163,8 @@ static bool parse_conf(const char* text) {
           }
           tok = strtok(NULL, ",");
         }
+      } else if (strcasecmp(key, "PersistentKeepalive") == 0) {
+        s_persistent_keepalive = atoi(value);
       }
     }
   }
@@ -177,6 +181,7 @@ static void save_config_to_storage(void) {
   cJSON_AddStringToObject(root, "endpoint", s_endpoint_host);
   cJSON_AddNumberToObject(root, "listen_port", s_listen_port);
   cJSON_AddNumberToObject(root, "endpoint_port", s_endpoint_port);
+  cJSON_AddNumberToObject(root, "persistent_keepalive", s_persistent_keepalive);
 
   cJSON* allowed = cJSON_CreateArray();
   for (int i = 0; i < s_extra_allowed_count; i++) {
@@ -236,6 +241,9 @@ static bool load_config_from_storage(void) {
   if ((item = cJSON_GetObjectItem(root, "endpoint_port")) && cJSON_IsNumber(item)) {
     s_endpoint_port = item->valueint;
   }
+  if ((item = cJSON_GetObjectItem(root, "persistent_keepalive")) && cJSON_IsNumber(item)) {
+    s_persistent_keepalive = item->valueint;
+  }
 
   s_extra_allowed_count = 0;
   cJSON* allowed = cJSON_GetObjectItem(root, "allowed_ips");
@@ -274,6 +282,7 @@ static esp_err_t build_and_init(void) {
   wg_config.netmask = s_local_netmask;
   wg_config.endpoint = s_endpoint_host;
   wg_config.port = s_endpoint_port;
+  wg_config.persistent_keepalive = (uint16_t)s_persistent_keepalive;
 
   memset(&s_ctx, 0, sizeof(s_ctx));
   esp_err_t err = esp_wireguard_init(&wg_config, &s_ctx);
@@ -297,6 +306,7 @@ esp_err_t wireguard_manager_init(void) {
     strncpy(s_endpoint_host, CONFIG_ESP_BMC_WG_PEER_ENDPOINT, sizeof(s_endpoint_host) - 1);
     s_listen_port = CONFIG_ESP_BMC_WG_LOCAL_PORT;
     s_endpoint_port = CONFIG_ESP_BMC_WG_PEER_PORT;
+    s_persistent_keepalive = CONFIG_ESP_BMC_WG_PERSISTENT_KEEPALIVE;
     s_extra_allowed_count = 0;
   }
   return build_and_init();
@@ -402,6 +412,8 @@ void wireguard_manager_get_allowed_ips(char* out, size_t out_len) {
     off += snprintf(out + off, out_len - off, "%s%s/%d", i == 0 ? "" : ", ", s_extra_allowed[i].ip, prefix);
   }
 }
+
+int wireguard_manager_get_persistent_keepalive(void) { return s_persistent_keepalive; }
 
 // --- Periodische VPN-Zustandsueberwachung (Audit-Log) ---
 static TaskHandle_t s_monitor_task = NULL;

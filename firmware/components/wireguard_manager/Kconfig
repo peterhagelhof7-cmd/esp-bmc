@@ -43,4 +43,14 @@ menu "ESP-BMC: WireGuardManager (P1 Machbarkeits-Spike)"
         int "UDP-Port des Peers"
         default 51820
 
+    config ESP_BMC_WG_PERSISTENT_KEEPALIVE
+        int "PersistentKeepalive (Sekunden, 0 = aus)"
+        default 25
+        help
+            Noetig, wenn dieses Geraet hinter NAT haengt (z.B. Heim-WLAN) -
+            ohne periodischen Keepalive verfaellt die NAT-Portmapping des
+            Routers und der Peer kann keine neuen Pakete mehr zustellen,
+            auch wenn der Tunnel lokal noch aktiv erscheint. WireGuard
+            empfiehlt 25s fuer NAT-Faelle.
+
 endmenu

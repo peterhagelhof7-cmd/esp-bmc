@@ -2867,3 +2867,38 @@ durchverbundene D+/D- konnte auch TinyUSB nie eine Session bekommen. Der
 eigentliche USJ-Vorteil (einfacher, ROM-gestuetzt, kein Deskriptor-/Component-
 Manager-Aufwand) bleibt gueltig; die Wahl war richtig, der damals genannte
 Ablehnungsgrund war aber teils der fehlenden Bruecke geschuldet.
+
+## 2026-08-03: WireGuard-PersistentKeepalive fehlte komplett (NAT-Erreichbarkeit)
+
+Symptom: Zentraler WG-Server (`gate.sps-cloud.de`, verwaltet mehrere Peers in
+10.2.2.0/24) konnte den ESP-BMC-Peer (10.2.2.67) nicht mehr erreichen (kein
+Ping, kein SSH-Connect), obwohl das Board selbst `vpnUp=1` meldete (SNMP
+1.3.6.1.4.1.99999.10.5.0). Andere Peers im selben Bereich blieben erreichbar
+-> serverseitiges Routing ausgeschlossen, Ursache musste geraeteseitig sein.
+
+Root Cause: `wireguard_manager.c`s `parse_conf()` parste `PersistentKeepalive`
+aus der hochgeladenen `wireguard.conf` nie (obwohl die Original-Config das
+Feld mit 25s enthielt) und `build_and_init()` setzte `wg_config.
+persistent_keepalive` nie - blieb also immer beim `esp_wireguard`-Default 0
+(aus). Das ESP-BMC haengt hinter NAT (Heim-WLAN); ohne periodischen Keepalive
+verfaellt die Portmapping-Zuordnung des Routers, sodass der Server keine
+neuen Pakete mehr zustellen kann, auch wenn der Tunnel lokal "aktiv"
+erscheint (der Handshake-Status kennt die NAT-Situation ja nicht).
+
+Fix (0.9.0-rc19): `PersistentKeepalive` wird jetzt geparst, in
+`/storage/wireguard.json` persistiert und beim Tunnelaufbau an
+`wireguard_config_t.persistent_keepalive` durchgereicht (Lib unterstuetzt das
+Feld bereits vollstaendig, siehe `esp_wireguard.h`/`wireguardif.c`). Neuer
+Kconfig-Platzhalter `ESP_BMC_WG_PERSISTENT_KEEPALIVE` (Default 25s, WireGuards
+eigene NAT-Empfehlung) fuer den Kconfig-Fallback-Pfad. `/settings` zeigt den
+Wert jetzt mit an (vorher fehlte er in der Anzeige komplett).
+
+Verifiziert (HW, echtes OTA ueber die Weboberflaeche, nicht nur Codereview):
+rc19 gebaut+geflasht, `/settings` zeigte zunaechst weiterhin "aus" (die alte
+`wireguard.json` auf dem Geraet enthielt nie einen Keepalive-Wert), nach
+erneutem Hochladen derselben `WG-SPS-CLOUD.conf` (enthaelt bereits
+`PersistentKeepalive = 25`) zeigt `/settings` jetzt "PersistentKeepalive:
+25s", Tunnel bleibt aktiv (`vpnUp=1`). Ob das die Server-Erreichbarkeit
+tatsaechlich dauerhaft repariert, ist über SNMP/Web-UI nicht pruefbar (das
+Board sieht ja nur die eigene Handshake-Sicht) - muss vom Server aus per
+`wg show`/Ping bestaetigt werden.

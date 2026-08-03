@@ -61,6 +61,11 @@ void wireguard_manager_get_public_key(char* out, size_t out_len);
 // Kommagetrennte Liste der AllowedIPs (ip/prefix), ohne die per Upload
 // entfernte Default-Route. Leerer String, wenn keine gesetzt sind.
 void wireguard_manager_get_allowed_ips(char* out, size_t out_len);
+// PersistentKeepalive in Sekunden (0 = aus). Noetig, wenn dieses Geraet
+// hinter NAT haengt - ohne periodischen Keepalive verfaellt die
+// NAT-Portmapping-Zuordnung des Routers und der Peer kann keine neuen
+// Pakete mehr zustellen, obwohl der Tunnel lokal noch "aktiv" erscheint.
+int wireguard_manager_get_persistent_keepalive(void);
 
 // Startet die periodische VPN-Zustandsueberwachung (loggt Auf-/Abbau des
 // Tunnels ins Audit-Log). Idempotent - mehrfacher Aufruf startet nur einmal.

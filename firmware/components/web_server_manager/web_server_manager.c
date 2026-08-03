@@ -578,18 +578,26 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
   wireguard_manager_get_public_key(wg_pubkey, sizeof(wg_pubkey));
   char wg_allowed[128];
   wireguard_manager_get_allowed_ips(wg_allowed, sizeof(wg_allowed));
+  int wg_keepalive = wireguard_manager_get_persistent_keepalive();
+  char wg_keepalive_str[16];
+  if (wg_keepalive > 0) {
+    snprintf(wg_keepalive_str, sizeof(wg_keepalive_str), "%ds", wg_keepalive);
+  } else {
+    strncpy(wg_keepalive_str, "aus", sizeof(wg_keepalive_str));
+  }
   bool wg_up = wireguard_manager_is_up();
-  char wg_details[512];
+  char wg_details[576];
   bool wg_has_ep = (wg_endpoint[0] != ':' && wg_endpoint[0] != '\0');
   snprintf(wg_details, sizeof(wg_details),
            "<p>Status: <b>%s</b> &middot; Tunnel: <b>%s</b></p>"
            "<p>Endpoint (Peer): %s</p>"
            "<p>Tunnel-IP (lokal): %s</p>"
            "<p>Peer-PublicKey: <code style=\"word-break:break-all\">%s</code></p>"
-           "<p>AllowedIPs: %s</p>",
+           "<p>AllowedIPs: %s</p>"
+           "<p>PersistentKeepalive: %s</p>",
            wg_uploaded ? "hochgeladen" : "Kconfig-Platzhalter", wg_up ? "aktiv" : "inaktiv",
            wg_has_ep ? wg_endpoint : "-", wg_local_ip[0] ? wg_local_ip : "-", wg_pubkey[0] ? wg_pubkey : "-",
-           wg_allowed[0] ? wg_allowed : "-");
+           wg_allowed[0] ? wg_allowed : "-", wg_keepalive_str);
 
   char snmp_community[32];
   snmp_manager_get_community(snmp_community, sizeof(snmp_community));
