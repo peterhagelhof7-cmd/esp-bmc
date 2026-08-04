@@ -26,6 +26,7 @@ static bool s_has_uploaded_config = false;
 // diese Puffer stattdessen gefuellt.
 static char s_private_key[64];
 static char s_public_key[64];
+static char s_preshared_key[64];
 static char s_local_address[16];
 static char s_local_netmask[16];
 static char s_endpoint_host[64];
@@ -88,7 +89,8 @@ static bool is_default_route(const char* cidr) {
 static bool parse_conf(const char* text) {
   char section[16] = "";
   s_extra_allowed_count = 0;
-  s_private_key[0] = s_public_key[0] = s_local_address[0] = s_local_netmask[0] = s_endpoint_host[0] = '\0';
+  s_private_key[0] = s_public_key[0] = s_preshared_key[0] = s_local_address[0] = s_local_netmask[0] =
+      s_endpoint_host[0] = '\0';
   s_listen_port = 51820;
   s_endpoint_port = 51820;
   s_persistent_keepalive = 0;
@@ -143,6 +145,8 @@ static bool parse_conf(const char* text) {
     } else if (strcasecmp(section, "Peer") == 0) {
       if (strcasecmp(key, "PublicKey") == 0) {
         strncpy(s_public_key, value, sizeof(s_public_key) - 1);
+      } else if (strcasecmp(key, "PresharedKey") == 0) {
+        strncpy(s_preshared_key, value, sizeof(s_preshared_key) - 1);
       } else if (strcasecmp(key, "Endpoint") == 0) {
         char* colon = strrchr(value, ':');
         if (colon) {
@@ -176,6 +180,7 @@ static void save_config_to_storage(void) {
   cJSON* root = cJSON_CreateObject();
   cJSON_AddStringToObject(root, "private_key", s_private_key);
   cJSON_AddStringToObject(root, "public_key", s_public_key);
+  cJSON_AddStringToObject(root, "preshared_key", s_preshared_key);
   cJSON_AddStringToObject(root, "address", s_local_address);
   cJSON_AddStringToObject(root, "netmask", s_local_netmask);
   cJSON_AddStringToObject(root, "endpoint", s_endpoint_host);
@@ -225,6 +230,10 @@ static bool load_config_from_storage(void) {
   }
   if ((item = cJSON_GetObjectItem(root, "public_key")) && cJSON_IsString(item)) {
     strncpy(s_public_key, item->valuestring, sizeof(s_public_key) - 1);
+  }
+  s_preshared_key[0] = '\0';
+  if ((item = cJSON_GetObjectItem(root, "preshared_key")) && cJSON_IsString(item)) {
+    strncpy(s_preshared_key, item->valuestring, sizeof(s_preshared_key) - 1);
   }
   if ((item = cJSON_GetObjectItem(root, "address")) && cJSON_IsString(item)) {
     strncpy(s_local_address, item->valuestring, sizeof(s_local_address) - 1);
@@ -278,6 +287,10 @@ static esp_err_t build_and_init(void) {
   wg_config.private_key = s_private_key;
   wg_config.listen_port = s_listen_port;
   wg_config.public_key = s_public_key;
+  // Nur setzen, wenn vorhanden - sonst NULL (kein PSK) aus dem DEFAULT lassen.
+  // Fehlt der PSK, wenn der Peer (z.B. Fritzbox) einen erwartet, scheitert der
+  // Handshake kryptografisch stumm -> Tunnel kommt nie hoch.
+  wg_config.preshared_key = s_preshared_key[0] ? s_preshared_key : NULL;
   wg_config.address = s_local_address;
   wg_config.netmask = s_local_netmask;
   wg_config.endpoint = s_endpoint_host;
@@ -414,6 +427,8 @@ void wireguard_manager_get_allowed_ips(char* out, size_t out_len) {
 }
 
 int wireguard_manager_get_persistent_keepalive(void) { return s_persistent_keepalive; }
+
+bool wireguard_manager_has_preshared_key(void) { return s_preshared_key[0] != '\0'; }
 
 // --- Periodische VPN-Zustandsueberwachung (Audit-Log) ---
 static TaskHandle_t s_monitor_task = NULL;

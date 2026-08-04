@@ -30,6 +30,16 @@ void notification_manager_trigger(const char* quelle, float value, float thresho
 bool notification_manager_set_syslog(const char* server, uint16_t port);
 void notification_manager_get_syslog(char* out_server, size_t out_len, uint16_t* out_port);
 
+// --- Syslog-Loglevel (Diagnose): leitet den ESP_LOG-Stream per UDP an den
+// Syslog-Server weiter. Level als esp_log_level_t: 0=aus, 1=ERROR, 2=WARN,
+// 3=INFO, 4=DEBUG. Setzt zur Laufzeit esp_log_level_set("*", level) und
+// persistiert. Standard 0 (nur die bisherigen Schwellwert-Meldungen). ---
+bool notification_manager_set_syslog_level(int level);
+int notification_manager_get_syslog_level(void);
+// Installiert den esp_log_set_vprintf-Hook + Weiterleitungs-Task. Einmalig
+// beim Start aufrufen (nach notification_manager_init()).
+void notification_manager_start_log_forward(void);
+
 // --- SMTP-Zielserver (Klartext, kein TLS) ---
 //
 // "password" wird nur uebernommen, wenn nicht leer - ein leeres Feld im

@@ -67,6 +67,11 @@ void wireguard_manager_get_allowed_ips(char* out, size_t out_len);
 // Pakete mehr zustellen, obwohl der Tunnel lokal noch "aktiv" erscheint.
 int wireguard_manager_get_persistent_keepalive(void);
 
+// true, wenn ein PresharedKey konfiguriert ist. Der PSK fliesst in die
+// Handshake-Key-Derivation ein - erwartet der Peer (z.B. Fritzbox) einen und
+// fehlt er hier, scheitert der Handshake stumm und der Tunnel bleibt inaktiv.
+bool wireguard_manager_has_preshared_key(void);
+
 // Startet die periodische VPN-Zustandsueberwachung (loggt Auf-/Abbau des
 // Tunnels ins Audit-Log). Idempotent - mehrfacher Aufruf startet nur einmal.
 void wireguard_manager_start_monitor(void);

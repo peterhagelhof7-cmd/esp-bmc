@@ -5,9 +5,12 @@
 
 #include "audit_log.h"
 #include "cJSON.h"
+#include <stdarg.h>
+
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "lwip/netdb.h"
 #include "lwip/sockets.h"
@@ -24,6 +27,7 @@ static const char* TAG = "notification_manager";
 
 static char s_syslog_server[HOST_CAP] = "";
 static uint16_t s_syslog_port = 514;
+static int s_syslog_level = 0;  // esp_log_level_t: 0=aus..4=DEBUG (Log->Syslog-Weiterleitung)
 
 static char s_smtp_server[HOST_CAP] = "";
 static uint16_t s_smtp_port = 25;
@@ -69,6 +73,7 @@ static void save_config(void) {
   cJSON* root = cJSON_CreateObject();
   cJSON_AddStringToObject(root, "syslog_server", s_syslog_server);
   cJSON_AddNumberToObject(root, "syslog_port", s_syslog_port);
+  cJSON_AddNumberToObject(root, "syslog_level", s_syslog_level);
   cJSON_AddStringToObject(root, "smtp_server", s_smtp_server);
   cJSON_AddNumberToObject(root, "smtp_port", s_smtp_port);
   cJSON_AddStringToObject(root, "smtp_sender", s_smtp_sender);
@@ -107,6 +112,11 @@ static void load_config(void) {
   if ((item = cJSON_GetObjectItem(root, "syslog_port")) && cJSON_IsNumber(item)) {
     s_syslog_port = (uint16_t)item->valueint;
   }
+  if ((item = cJSON_GetObjectItem(root, "syslog_level")) && cJSON_IsNumber(item)) {
+    s_syslog_level = item->valueint;
+    if (s_syslog_level < 0) s_syslog_level = 0;
+    if (s_syslog_level > 4) s_syslog_level = 4;
+  }
   if ((item = cJSON_GetObjectItem(root, "smtp_server")) && cJSON_IsString(item)) {
     strncpy(s_smtp_server, item->valuestring, sizeof(s_smtp_server) - 1);
   }
@@ -129,9 +139,16 @@ static void digest_flush_task(void* arg);  // Definition weiter unten, bei der E
 
 void notification_manager_init(void) {
   load_config();
+  // Boot-Sicherheit: Diagnose-Level NIE aus dem persistierten Wert anwenden.
+  // init() laeuft vor dem lwIP-tcpip-Thread; ein persistierter Level > 0 wuerde
+  // den Log-Forwarder sofort UDP senden lassen -> "tcpip_send_msg_wait_sem
+  // Invalid mbox"-Assert -> Boot-Schleife (Vorfall 2026-08-03). Der Level muss
+  // nach jedem Boot bewusst zur Laufzeit (Netzwerk oben) neu gesetzt werden.
+  s_syslog_level = 0;
+  notification_manager_start_log_forward();
   xTaskCreate(digest_flush_task, "notify_digest", 3072, NULL, 1, NULL);
-  ESP_LOGI(TAG, "NotificationManager gestartet (Syslog: %s, SMTP: %s)", s_syslog_server[0] ? "konfiguriert" : "aus",
-           s_smtp_server[0] ? "konfiguriert" : "aus");
+  ESP_LOGI(TAG, "NotificationManager gestartet (Syslog: %s, SMTP: %s, Diag-Level: %d)",
+           s_syslog_server[0] ? "konfiguriert" : "aus", s_smtp_server[0] ? "konfiguriert" : "aus", s_syslog_level);
 }
 
 bool notification_manager_set_syslog(const char* server, uint16_t port) {
@@ -248,6 +265,71 @@ static void send_syslog(const char* message) {
   snprintf(packet, sizeof(packet), "<12>esp-bmc: %s", message);
   sendto(sock, packet, strlen(packet), 0, (struct sockaddr*)&addr, sizeof(addr));
   close(sock);
+}
+
+// =============================================================================
+// ESP_LOG -> Syslog-Weiterleitung (Diagnose). Ein esp_log_set_vprintf-Hook
+// reiht jede formatierte Logzeile in eine Queue; ein eigener Task verschickt
+// sie per UDP an den Syslog-Server (reuse send_syslog). Bewusst NICHT direkt
+// aus dem Hook senden - der kann aus beliebigem Task-Kontext (auch lwIP/WiFi)
+// aufgerufen werden, ein blockierendes sendto() dort waere gefaehrlich.
+// Weiterleitung nur aktiv, wenn s_syslog_level > 0 UND ein Server gesetzt ist.
+// =============================================================================
+
+#define LOG_FWD_ITEM_LEN 200
+#define LOG_FWD_QUEUE_LEN 48
+static QueueHandle_t s_log_queue = NULL;
+static vprintf_like_t s_orig_vprintf = NULL;
+static volatile bool s_in_forward = false;
+
+static int log_vprintf_hook(const char* fmt, va_list ap) {
+  va_list ap2;
+  va_copy(ap2, ap);
+  int r = s_orig_vprintf ? s_orig_vprintf(fmt, ap) : vprintf(fmt, ap);
+  if (s_log_queue && s_syslog_level > 0 && !s_in_forward) {
+    char buf[LOG_FWD_ITEM_LEN];
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap2);
+    if (n > 0) {
+      for (char* p = buf; *p; ++p) {
+        if (*p == '\n' || *p == '\r' || *p == 0x1b) *p = ' ';  // Zeilenumbrueche/ANSI entschaerfen
+      }
+      xQueueSend(s_log_queue, buf, 0);  // non-blocking; bei voller Queue verwerfen
+    }
+  }
+  va_end(ap2);
+  return r;
+}
+
+static void log_forward_task(void* arg) {
+  (void)arg;
+  char item[LOG_FWD_ITEM_LEN];
+  for (;;) {
+    if (xQueueReceive(s_log_queue, item, portMAX_DELAY)) {
+      if (s_syslog_level <= 0 || s_syslog_server[0] == '\0') continue;
+      s_in_forward = true;  // beim Senden entstehende Logs nicht erneut einreihen
+      send_syslog(item);
+      s_in_forward = false;
+    }
+  }
+}
+
+void notification_manager_start_log_forward(void) {
+  if (s_log_queue) return;  // schon aktiv
+  s_log_queue = xQueueCreate(LOG_FWD_QUEUE_LEN, LOG_FWD_ITEM_LEN);
+  if (!s_log_queue) return;
+  xTaskCreate(log_forward_task, "log_syslog", 4096, NULL, 1, NULL);
+  s_orig_vprintf = esp_log_set_vprintf(log_vprintf_hook);
+}
+
+int notification_manager_get_syslog_level(void) { return s_syslog_level; }
+
+bool notification_manager_set_syslog_level(int level) {
+  if (level < 0) level = 0;
+  if (level > 4) level = 4;  // MAXIMUM_LEVEL ist DEBUG (4)
+  s_syslog_level = level;
+  esp_log_level_set("*", (esp_log_level_t)(level > 0 ? level : 2));  // 0 = aus -> zurueck auf WARN
+  save_config();
+  return true;
 }
 
 // =============================================================================

@@ -594,10 +594,12 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
            "<p>Tunnel-IP (lokal): %s</p>"
            "<p>Peer-PublicKey: <code style=\"word-break:break-all\">%s</code></p>"
            "<p>AllowedIPs: %s</p>"
-           "<p>PersistentKeepalive: %s</p>",
+           "<p>PersistentKeepalive: %s</p>"
+           "<p>PresharedKey: %s</p>",
            wg_uploaded ? "hochgeladen" : "Kconfig-Platzhalter", wg_up ? "aktiv" : "inaktiv",
            wg_has_ep ? wg_endpoint : "-", wg_local_ip[0] ? wg_local_ip : "-", wg_pubkey[0] ? wg_pubkey : "-",
-           wg_allowed[0] ? wg_allowed : "-", wg_keepalive_str);
+           wg_allowed[0] ? wg_allowed : "-", wg_keepalive_str,
+           wireguard_manager_has_preshared_key() ? "gesetzt" : "-");
 
   char snmp_community[32];
   snmp_manager_get_community(snmp_community, sizeof(snmp_community));
@@ -607,6 +609,19 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
   char syslog_server[64];
   uint16_t syslog_port;
   notification_manager_get_syslog(syslog_server, sizeof(syslog_server), &syslog_port);
+  int syslog_level = notification_manager_get_syslog_level();
+  char syslog_level_html[420];
+  {
+    static const char* lvl_names[] = {"aus", "ERROR", "WARN", "INFO", "DEBUG"};
+    int off = snprintf(syslog_level_html, sizeof(syslog_level_html),
+                       "<label>Syslog-Loglevel (Diagnose: leitet den ESP_LOG-Stream per UDP an den "
+                       "Syslog-Server weiter)</label><select name=\"syslog_level\">");
+    for (int i = 0; i <= 4; i++) {
+      off += snprintf(syslog_level_html + off, sizeof(syslog_level_html) - off, "<option value=\"%d\"%s>%d = %s</option>",
+                      i, (i == syslog_level) ? " selected" : "", i, lvl_names[i]);
+    }
+    snprintf(syslog_level_html + off, sizeof(syslog_level_html) - off, "</select>");
+  }
   char smtp_server[64], smtp_sender[64], smtp_username[64];
   uint16_t smtp_port;
   notification_manager_get_smtp(smtp_server, sizeof(smtp_server), &smtp_port, smtp_sender, sizeof(smtp_sender),
@@ -803,6 +818,7 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       "<form method=\"post\" action=\"/settings/notify\">"
       "<label>Syslog-Server (leer = aus)</label><input type=\"text\" name=\"syslog_server\" value=\"%s\">"
       "<label>Syslog-Port</label><input type=\"number\" name=\"syslog_port\" value=\"%u\">"
+      "%s"
       "<label>SMTP-Server (leer = aus)</label><input type=\"text\" name=\"smtp_server\" value=\"%s\">"
       "<label>SMTP-Port</label><input type=\"number\" name=\"smtp_port\" value=\"%u\">"
       "<label>Absender-Adresse</label><input type=\"text\" name=\"smtp_sender\" value=\"%s\">"
@@ -884,7 +900,7 @@ static esp_err_t settings_get_handler(httpd_req_t* req) {
       username, role_name(role), ip, is_static ? "statisch" : "DHCP", is_static ? "" : " selected",
       is_static ? " selected" : "", cur_ip, cur_mask, cur_gw, scan_html,
       wg_details, users_html, snmp_community,
-      snmp_rw_community, syslog_server, (unsigned)syslog_port, smtp_server, (unsigned)smtp_port, smtp_sender,
+      snmp_rw_community, syslog_server, (unsigned)syslog_port, syslog_level_html, smtp_server, (unsigned)smtp_port, smtp_sender,
       smtp_username, config_manager_get_ntc_temp_max_c(), config_manager_get_dht_temp_max_c(),
       config_manager_get_dht_humidity_max_pct(), taster_pw_html, taster_pw_html, taster_pw_html,
       tastschutz_checked, power_led_checked,
@@ -1294,10 +1310,11 @@ static esp_err_t settings_notify_post_handler(httpd_req_t* req) {
   if (received <= 0) return ESP_FAIL;
   body[received] = '\0';
 
-  char syslog_server[64], syslog_port_str[8];
+  char syslog_server[64], syslog_port_str[8], syslog_level_str[8];
   char smtp_server[64], smtp_port_str[8], smtp_sender[64], smtp_username[64], smtp_password[64];
   parse_form_field(body, "syslog_server", syslog_server, sizeof(syslog_server));
   parse_form_field(body, "syslog_port", syslog_port_str, sizeof(syslog_port_str));
+  parse_form_field(body, "syslog_level", syslog_level_str, sizeof(syslog_level_str));
   parse_form_field(body, "smtp_server", smtp_server, sizeof(smtp_server));
   parse_form_field(body, "smtp_port", smtp_port_str, sizeof(smtp_port_str));
   parse_form_field(body, "smtp_sender", smtp_sender, sizeof(smtp_sender));
@@ -1307,6 +1324,7 @@ static esp_err_t settings_notify_post_handler(httpd_req_t* req) {
   uint16_t syslog_port = syslog_port_str[0] ? (uint16_t)atoi(syslog_port_str) : 514;
   uint16_t smtp_port = smtp_port_str[0] ? (uint16_t)atoi(smtp_port_str) : 25;
 
+  notification_manager_set_syslog_level(syslog_level_str[0] ? atoi(syslog_level_str) : 0);
   bool ok = notification_manager_set_syslog(syslog_server, syslog_port) &&
             notification_manager_set_smtp(smtp_server, smtp_port, smtp_sender, smtp_username, smtp_password);
   ESP_LOGI(TAG, "%s hat die Benachrichtigungswege geaendert: %s", username, ok ? "erfolgreich" : "fehlgeschlagen");
