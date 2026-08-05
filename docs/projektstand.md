@@ -44,11 +44,11 @@ verifiziert.** Es existiert noch kein Board. Alles unten ist
 | Anforderung | Status | Anmerkung |
 |---|---|---|
 | WLAN (2,4 GHz) | ✅ | inkl. Scan, Beitritt, statische IP/DHCP, Auto-Reconnect bei Trennung |
-| WireGuard-VPN | 🟡 | Kompiliert, Konfiguration ladbar (Upload/USB), Status abfragbar — **echter Tunnelaufbau nie gegen einen realen Peer getestet**; kein aktiver Health-Check/Reconnect auf ESP-BMC-Seite (nur was die Bibliothek selbst intern macht) |
+| WireGuard-VPN | ✅ | **Auf echter Hardware gegen eine reale Fritzbox-Gegenstelle verifiziert** — Tunnelaufbau, PresharedKey, Peer-Subnetz-Routing, sowie Ping und SSH von einem entfernten VPN-Client zum ESP-BMC funktionieren. Konfiguration ladbar (Upload/USB), PersistentKeepalive; periodischer Health-Check-Task protokolliert Auf-/Abbau ins Audit-Log. Behobene Fehler unterwegs: Boot-Crash der Anbindung, fehlendes PSK-Parsing, `MAX_SRC_IPS=1` (Peer-Subnetz-Route ging verloren) |
 | HTTP-Webserver | ✅ | `esp_http_server`, aktuell 20 Routen |
 | WebSocket | ✅ | interaktive Konsole (`/ws/console`) |
 | Webinterface mit serieller Konsole + WireGuard-Upload | ✅ | |
-| SSH-Zugang zur seriellen Konsole | 🟡 | **gebaut (P7), noch nicht auf Hardware getestet.** Eigener SSH-Server (`wolfssl/wolfssh`), Passwort UND Public-Key-Auth gegen dieselbe `user_manager`-Kontodatenbank, gebrückt auf denselben CDC-Kanal wie die Web-Konsole (genau eine Sitzung gleichzeitig, Web oder SSH). Host-Key-Fingerprint + volle Public-Key-Zeile auf der Übersichtsseite sichtbar (nicht vertraulich, dient der Out-of-Band-Prüfung vor dem ersten Connect) |
+| SSH-Zugang zur seriellen Konsole | ✅ | **Auf Hardware verifiziert, auch über den WireGuard-Tunnel.** Eigener SSH-Server (`wolfssl/wolfssh`), Passwort UND Public-Key-Auth gegen dieselbe `user_manager`-Kontodatenbank, gebrückt auf denselben CDC-Kanal wie die Web-Konsole (genau eine Sitzung gleichzeitig, Web oder SSH). Host-Key-Fingerprint + volle Public-Key-Zeile auf der Übersichtsseite sichtbar (nicht vertraulich, dient der Out-of-Band-Prüfung vor dem ersten Connect) |
 
 ### USB-Schnittstelle (Lastenheft 7 / Pflichtenheft 6)
 
@@ -65,7 +65,7 @@ verifiziert.** Es existiert noch kein Board. Alles unten ist
 | Anforderung | Status | Anmerkung |
 |---|---|---|
 | Serielle Konsole im Browser | ✅ | |
-| WireGuard-Konfigurationsdatei hochladen | ✅ | mit automatischem Entfernen der Default-Route |
+| WireGuard-Konfigurationsdatei hochladen | ✅ | inkl. PresharedKey und Peer-Subnetz; automatisches Entfernen der Default-Route aus `AllowedIPs` |
 | Anzeige der Überwachungswerte | ✅ | inkl. 24h-Chart (Chart.js via CDN, einzige Stelle mit Client-JS) |
 | Bedienung der Steuerungsfunktionen | ✅ | (mit der Tastschutz-Lücke von oben) |
 | Tastschutz aktivieren/deaktivieren | ✅ | Web-Schalter behoben 2026-07-17 (siehe Steuerungs-Tabelle oben) |
@@ -74,13 +74,13 @@ verifiziert.** Es existiert noch kein Board. Alles unten ist
 | SSH-Key hinterlegen | 🟡 | Selbstbedienungs-Formular auf der Übersichtsseite (nur eigener Account) — gebaut, nicht auf Hardware getestet, siehe SSH-Zugang oben |
 | E-Mail-Benachrichtigung hinterlegen | 🟡 | Selbstbedienungs-Formular auf der Übersichtsseite (Adresse + Aktiv-Schalter, jede Rolle) — gebaut, nicht auf Hardware getestet, siehe Benachrichtigungsversand oben |
 | SNMP-Monitoring | ✅ | nicht im Lastenheft gefordert, auf Nutzerwunsch ergänzt (eigene private MIB, GET+SET, 17 Objekte inkl. Firmwareversion) — Zabbix-Template `docs/zabbix-template-esp-bmc.yaml` (Vorbild sm-wlan) |
-| OTA-Firmware-Update | 🟡 | nicht im Lastenheft gefordert, auf Nutzerwunsch ergänzt — lokaler .bin-Upload, Admin-only, Identitäts-/Downgrade-Prüfung + Bootloader-Rollback wie/über die Sensormeter-Familie hinaus (siehe `docs/entscheidungen.md`) — **gebaut, noch nicht auf Hardware getestet**. Erste Version: `0.9.0-rc4` |
+| OTA-Firmware-Update | ✅ | nicht im Lastenheft gefordert, auf Nutzerwunsch ergänzt — lokaler .bin-Upload, Admin-only, Identitäts-/Downgrade-Prüfung + Bootloader-Rollback wie/über die Sensormeter-Familie hinaus (siehe `docs/entscheidungen.md`) — **auf Hardware verifiziert** (mehrfach für die Updates unten genutzt). Aktuelle Version: `0.9.0-rc23` |
 
 ### Sicherheit (Lastenheft 9 / Pflichtenheft 7)
 
 | Anforderung | Status | Anmerkung |
 |---|---|---|
-| Webserver auch über WireGuard erreichbar, nicht exklusiv | ✅ | (architekturell so gebaut, aber siehe VPN-Vorbehalt oben) |
+| Webserver auch über WireGuard erreichbar, nicht exklusiv | ✅ | auf Hardware über den Fritzbox-Tunnel verifiziert (Web/SSH von entferntem VPN-Client) |
 | Eigene Authentifizierung für Nicht-VPN-Zugriff | ✅ | Session-Cookie (Web), Login+Rolle (USB), getrennte Lese-/Schreib-Community (SNMP) — war in Pflichtenheft 12 als offene Entscheidung gelistet, ist es nicht mehr |
 | Galvanische Entkopplung Taster-Weiterleitung | 🟡 | Software/Ablauf-Logik fertig, Verdrahtung final geplant (PC817, siehe `docs/verdrahtungsplan.html`) — elektrische Umsetzung mangels Hardware nicht verifiziert |
 
@@ -93,9 +93,9 @@ mit aktuellem Stand:
 
 | Punkt | Ursprünglicher Stand (Pflichtenheft) | Aktueller Stand |
 |---|---|---|
-| WireGuard-Bibliothek | offen | ✅ entschieden (droscy/esp_wireguard) — nur der Hardware-Test fehlt noch |
+| WireGuard-Bibliothek | offen | ✅ entschieden (droscy/esp_wireguard) und auf echter Hardware gegen eine Fritzbox-Gegenstelle verifiziert (inkl. PresharedKey + Peer-Subnetz-Routing) |
 | Partitionstabelle | offen | ✅ entschieden und gebaut (siehe Abschnitt 3) |
-| SSH-Zugang | echtes SSH vs. TCP-Tunnel | ✅ entschieden und gebaut (eigener SSH-Server auf dem ESP, `wolfssl/wolfssh`) — **Hardware-Test steht noch aus** |
+| SSH-Zugang | echtes SSH vs. TCP-Tunnel | ✅ entschieden, gebaut und auf Hardware verifiziert (eigener SSH-Server auf dem ESP, `wolfssl/wolfssh`) — funktioniert auch über den WireGuard-Tunnel |
 | Authentifizierung Webserver | offen | ✅ entschieden und gebaut |
 | Versandweg Benachrichtigungen | offen | ✅ entschieden und gebaut: Syslog (UDP) + SMTP ohne TLS (bewusst, kein zweiter Krypto-Stack neben wolfSSL) — **Hardware-Test steht noch aus** |
 | Konfigurationsformat | XML (Kandidat) vs. JSON | ✅ entschieden: JSON (cJSON), nicht XML wie ursprünglich vermutet |
@@ -105,13 +105,13 @@ mit aktuellem Stand:
 
 Zusätzlich, unabhängig von der ursprünglichen offenen-Punkte-Liste:
 
-- **P6** — WireGuard-Normalbetrieb auf echter Hardware (Tunnelaufbau gegen einen echten Peer) — nicht testbar ohne Board.
-- **P7** — SSH-Server — gebaut (Passwort+Public-Key-Auth, eigener Server auf dem ESP), noch nicht auf echter Hardware/gegen einen echten SSH-Client getestet.
+- **P6** — WireGuard-Normalbetrieb auf echter Hardware (Tunnelaufbau gegen einen echten Peer) — ✅ **erledigt**: gegen eine reale Fritzbox-Gegenstelle verifiziert, inkl. Ping/SSH von einem entfernten VPN-Client zum ESP-BMC.
+- **P7** — SSH-Server — ✅ **erledigt**: Passwort- und Public-Key-Auth auf echter Hardware getestet, auch über den WireGuard-Tunnel.
 - **P8** — Verkabelung/Ende-zu-Ende-Test — nicht begonnen.
 - Generisches `config upload` über USB (ganze Konfiguration in einem Rutsch, aus `inital setup.txt`) — bewusst zurückgestellt, da `config_manager` bis vor kurzem komplett RAM-only war; einzelne Felder (Systemname, SNMP, Schwellwerte, Tastschutz) sind seit heute per USB einzeln setzbar, ein zusammenfassendes Upload-Kommando fehlt aber weiterhin.
 - Serieller BIOS-Zugriff (Serial Console Redirection, Lastenheft 7.3/Pflichtenheft 6.2).
-- Aktive WireGuard-Tunnel-Überwachung/Reconnect auf ESP-BMC-Seite (Pflichtenheft 8.2) — bislang nur die passive Status-Abfrage.
-- Host-seitiges Setup-Tooling (`tools/Setup.ps1`) existiert bereits, aber ohne echten Hardware-Test und ohne Anbindung an ein Git-Remote (existiert noch nicht).
+- Aktive WireGuard-Tunnel-Überwachung auf ESP-BMC-Seite (Pflichtenheft 8.2): ein periodischer Monitor-Task protokolliert Auf-/Abbau ins Audit-Log, PersistentKeepalive hält die NAT-Zuordnung offen — ein aktiver Reconnect-Anstoß bei dauerhaftem Ausfall fehlt aber weiterhin (bislang nur, was die Bibliothek intern macht).
+- Host-seitiges Tooling: `tools/Setup.ps1` (Ersteinrichtung) sowie die Serienkonsolen-Bridges für **Windows** (`tools/Install-EspBmcConsole.ps1`) und **Linux** (`tools/espbmc-console.py`) liegen bei; das Repo ist an ein Git-Remote angebunden (`github.com/peterhagelhof7-cmd/esp-bmc`). Die Linux-Bridge ist noch nicht auf echter Linux-Hardware getestet.
 
 ---
 

@@ -96,7 +96,7 @@
   <h1>ESP-BMC</h1>
   <div class="subtitle">Admin-Guide — Fernsteuerung, Überwachung und Konfiguration eines PCs per ESP32-S3, ohne dessen eigenes Betriebssystem</div>
   <div class="badges">
-    <span class="badge badge-orange">v0.9.0-rc4 · erste Beta</span>
+    <span class="badge badge-orange">v0.9.0-rc23 · erste Beta</span>
     <span class="badge">ESP32-S3 DevKitC-1 N16R8 / N8R8</span>
     <span class="badge">Web · SSH · USB · SNMP · Syslog/SMTP · WireGuard-VPN · OTA</span>
   </div>
@@ -293,6 +293,16 @@ aktuellen Ordner, bietet es an, sie hochzuladen (USB-Kommando
 Standardroute (<span class="code">0.0.0.0/0</span>) wird dabei automatisch
 entfernt, damit der restliche Netzwerkverkehr des Geräts nicht über den
 Tunnel läuft.</p>
+<div class="callout">
+  <div class="callout-title">Fritzbox- und PresharedKey-Konfigurationen</div>
+  Konfigurationen mit einem <span class="code">PresharedKey</span> (z.&nbsp;B.
+  von einer <b>Fritzbox</b> erzeugt) werden vollständig unterstützt — der
+  PSK wird eingelesen, gespeichert und auf den Tunnel angewandt. Auch das
+  Peer-/Client-Subnetz aus <span class="code">AllowedIPs</span> (etwa
+  <span class="code">192.168.79.0/24</span>) wird als Route registriert, damit
+  der ESP-BMC von entfernten VPN-Clients per Ping/SSH erreichbar ist. Auf der
+  Einstellungsseite (Abschnitt&nbsp;4) zeigt der WireGuard-Block an, ob ein
+  PresharedKey gesetzt ist.</div>
 
 <h2>2.3 WLAN einrichten (optional)</h2>
 <p>Auf Wunsch führt das Skript einen WLAN-Scan durch
@@ -422,6 +432,12 @@ einfügen (kein Datei-Upload-Dialog — eine wenige hundert Byte große Datei
 passt bequem als Formularfeld). Eine enthaltene Standardroute wird
 automatisch entfernt (wie beim USB-Import, Abschnitt 2.2). Eigener Button
 zum Löschen der Konfiguration.</p>
+<p>Der Statusblock zeigt Endpoint, lokale Tunnel-IP, Peer-PublicKey,
+<span class="code">AllowedIPs</span>, PersistentKeepalive und ob ein
+<b>PresharedKey</b> gesetzt ist — sowie <em>Tunnel: aktiv/inaktiv</em>.
+Konfigurationen mit PresharedKey und einem Peer-Subnetz (z.&nbsp;B. von einer
+Fritzbox) sind damit vollständig nutzbar, inkl. Erreichbarkeit des ESP-BMC
+über das VPN (Ping/SSH von entfernten Clients).</p>
 
 <h3>Benutzerverwaltung</h3>
 <p>Neue Konten anlegen (Benutzername ohne Sonderzeichen, Passwort
@@ -443,6 +459,7 @@ powerKey/resetKey) — siehe Abschnitt 8.</p>
 <table>
   <tr><th>Feld</th><th>Bedeutung</th></tr>
   <tr><td>Syslog-Server / -Port</td><td>UDP-Ziel für Syslog-Meldungen. Leer = deaktiviert. Standard-Port: 514.</td></tr>
+  <tr><td>Syslog-Loglevel</td><td><b>Diagnose-Log-Weiterleitung</b> (0&nbsp;=&nbsp;aus … 4&nbsp;=&nbsp;DEBUG): leitet die laufenden ESP-Firmware-Logzeilen zusätzlich per Syslog an den obigen Server weiter. Aus Sicherheitsgründen wird der Level <b>bei jedem Neustart auf 0 zurückgesetzt</b> und muss zur Laufzeit neu gesetzt werden. Hohe Level (v.&nbsp;a. 4&nbsp;=&nbsp;DEBUG) erzeugen viel Verkehr — nur kurzzeitig zur Fehlersuche nutzen.</td></tr>
   <tr><td>SMTP-Server / -Port</td><td>Mail-Relay, bewusst <b>ohne TLS</b> (siehe Callout) — nur für ein vertrauenswürdiges internes Netz gedacht.</td></tr>
   <tr><td>Absender-Adresse</td><td>Erscheint als Absender jeder gesendeten Mail.</td></tr>
   <tr><td>Benutzername / Passwort</td><td>Nur nötig, falls das Relay eine Anmeldung verlangt (leer = keine Authentifizierung). Ein leeres Passwortfeld beim Speichern bedeutet „unverändert lassen".</td></tr>
@@ -694,37 +711,64 @@ wichtigsten Punkte.</p>
 <!-- ============================================================ -->
 <h1 class="section" id="sec11"><span class="num">11</span>PC-Konsole bereitstellen (Serienkonsolen-Bridge)</h1>
 <p>Der ESP-BMC stellt dem gesteuerten PC seinen nativen USB als seriellen
-Konsolenkanal bereit (Port&nbsp;B, siehe Abschnitt&nbsp;1.1). Windows <b>bedient
-diesen Port aber nicht von selbst</b> — ein COM-Port ist passiv. Damit die
+Konsolenkanal bereit (Port&nbsp;B, siehe Abschnitt&nbsp;1.1). Der Host <b>bedient
+diesen Port aber nicht von selbst</b> — ein serieller Port ist passiv. Damit die
 Web-/SSH-Konsole des ESP-BMC eine echte Konsole des gesteuerten PCs zeigt, muss
 auf dem PC ein kleiner Dienst laufen, der den Port öffnet und eine Shell darüber
-bereitstellt (vergleichbar mit einem <span class="code">getty</span> unter Linux).</p>
-<p>Dafür liegt <span class="code">tools/Install-EspBmcConsole.ps1</span> bei. Das
-Skript wird <b>einmal pro PC als Administrator</b> ausgeführt und richtet eine
-geplante Aufgabe ein, die bei <b>jedem Systemstart</b> (als
-<span class="code">SYSTEM</span>, schon vor dem Login) eine zeilenbasierte
-PowerShell-Konsole über die serielle Schnittstelle des ESP-BMC bereitstellt.</p>
+bereitstellt (vergleichbar mit einem <span class="code">getty</span> unter Linux).
+Beide Bridges finden den ESP-BMC über die USB-ID
+(<span class="code">VID_303A&amp;PID_1001</span>) statt über einen festen
+Gerätenamen und verbinden sich nach einem ESP-Reboot/Umstecken automatisch neu.
+Es liegt je ein Skript für Windows und Linux bei.</p>
+
+<h2>11.1 Windows (PowerShell-Dienst)</h2>
+<p><span class="code">tools/Install-EspBmcConsole.ps1</span> wird <b>einmal pro PC
+als Administrator</b> ausgeführt und richtet eine geplante Aufgabe ein, die bei
+<b>jedem Systemstart</b> (als <span class="code">SYSTEM</span>, schon vor dem
+Login) eine zeilenbasierte PowerShell-Konsole über die serielle Schnittstelle des
+ESP-BMC bereitstellt.</p>
 <pre class="code-block"># In einer Administrator-PowerShell:
 cd tools
 .\Install-EspBmcConsole.ps1</pre>
-
-<h2>11.1 Merkmale</h2>
 <ul>
-  <li><b>Portsuche über die USB-ID</b> (<span class="code">VID_303A&amp;PID_1001</span>,
-  nativer USB des ESP-BMC) statt einer festen COM-Nummer — funktioniert daher auf
-  jedem PC unabhängig von der vergebenen COM-Nummer.</li>
-  <li><b>Automatischer Reconnect</b>: hängt sich neu an, sobald der Port nach einem
-  ESP-Reboot oder Umstecken wieder erscheint.</li>
   <li><b>Läuft dauerhaft</b> als geplante Aufgabe „ESP-BMC Serial Console" (Trigger
-  Systemstart, Neustart bei Fehler, kein Zeitlimit). Log:
+  Systemstart, Neustart bei Fehler, kein Zeitlimit, als
+  <span class="code">SYSTEM</span>). Log:
   <span class="code">%ProgramData%\ESP-BMC-Console\bridge.log</span>.</li>
+  <li><b>Entfernen</b>: <span class="code">.\Install-EspBmcConsole.ps1 -Deinstallieren</span></li>
 </ul>
-<p>Entfernen: <span class="code">.\Install-EspBmcConsole.ps1 -Deinstallieren</span></p>
+
+<h2>11.2 Linux (systemd-Dienst)</h2>
+<p><span class="code">tools/espbmc-console.py</span> ist das funktionsgleiche
+Gegenstück (nur Python-3-Standardbibliothek, kein
+<span class="code">pyserial</span> nötig). Es wird <b>einmal als root</b>
+installiert und richtet einen systemd-Dienst ein, der bei jedem Boot eine
+zeilenbasierte <span class="code">/bin/sh</span>-Konsole über die serielle
+Schnittstelle des ESP-BMC bereitstellt.</p>
+<pre class="code-block"># Dienst einrichten (Autostart, als root):
+sudo ./espbmc-console.py install
+
+# vor der Installation im Vordergrund testen:
+./espbmc-console.py run
+
+# wieder entfernen:
+sudo ./espbmc-console.py uninstall</pre>
+<ul>
+  <li><b>systemd-Dienst</b> <span class="code">esp-bmc-console.service</span>
+  (<span class="code">Restart=always</span>). Log:
+  <span class="code">/var/log/esp-bmc-console.log</span> bzw.
+  <span class="code">journalctl -u esp-bmc-console.service -f</span>.</li>
+  <li>Findet das tty über die USB-VID/PID in <span class="code">sysfs</span>
+  (<span class="code">/dev/ttyACM*</span>), hebt DTR an, behandelt CR/LF/CRLF,
+  Backspace und lokales Echo — 1:1 wie das Windows-Pendant.
+  <span class="code">cd</span> bleibt über Befehle hinweg erhalten.</li>
+</ul>
 
 <div class="callout warn">
-  <div class="callout-title">Sicherheit: SYSTEM-Konsole</div>
-  Die Bridge bietet als <span class="code">SYSTEM</span> vollen PowerShell-Zugriff
-  auf den PC an <b>jeden, der die serielle ESP-BMC-Schnittstelle erreicht</b> —
+  <div class="callout-title">Sicherheit: Host-Konsole (SYSTEM bzw. root)</div>
+  Die Bridge bietet vollen Shell-Zugriff auf den PC (als
+  <span class="code">SYSTEM</span> unter Windows bzw. <span class="code">root</span>
+  unter Linux) an <b>jeden, der die serielle ESP-BMC-Schnittstelle erreicht</b> —
   geschützt ausschließlich durch die (authentifizierte) Web-/SSH-Konsole des
   ESP-BMC, genau wie bei einem Hardware-BMC. Nur in zugangsgeschützten Umgebungen
   einsetzen.
@@ -733,8 +777,9 @@ cd tools
   <div class="callout-title">Ausgabe zuverlässig über die SSH-Konsole</div>
   Die Konsolenausgabe erreicht dich am zuverlässigsten über die
   <b>SSH-Konsole</b> (Abschnitt&nbsp;6), da diese den seriellen Kanal direkt
-  durchreicht: getippte PowerShell-Zeilen (mit Enter) werden auf dem gesteuerten
-  PC ausgeführt, die Ausgabe kommt über denselben Kanal zurück.
+  durchreicht: getippte Befehle (mit Enter) werden auf dem gesteuerten
+  PC ausgeführt (PowerShell unter Windows, <span class="code">/bin/sh</span> unter
+  Linux), die Ausgabe kommt über denselben Kanal zurück.
 </div>
 
 <!-- ============================================================ -->

@@ -32,6 +32,8 @@ Schnittstelle, die sich zugleich als USB-HID-Tastatur ausgibt.
 | [docs/projektstand.md](docs/projektstand.md) | Fortschrittstabelle: was ist fertig, was noch offen |
 | [tools/Setup.ps1](tools/Setup.ps1) | PowerShell-Skript: Abhängigkeiten installieren, bauen, Flash-Größe erkennen, flashen, Ersteinrichtung per USB |
 | [tools/EspBmcLink.psm1](tools/EspBmcLink.psm1) | PowerShell-Modul für die USB-Kommandoverbindung (auch von `Setup.ps1` genutzt) |
+| [tools/Install-EspBmcConsole.ps1](tools/Install-EspBmcConsole.ps1) | **Windows**: richtet die Serienkonsolen-Bridge als Autostart-Dienst ein (PowerShell-Shell des PCs über die serielle ESP-BMC-Schnittstelle, Auto-Reconnect) |
+| [tools/espbmc-console.py](tools/espbmc-console.py) | **Linux**-Gegenstück zur Serienkonsolen-Bridge (systemd-Dienst, `/bin/sh`-Shell über die serielle ESP-BMC-Schnittstelle; nur Python-3-Stdlib) |
 
 ## Hardware
 
@@ -56,9 +58,10 @@ Schnittstelle, die sich zugleich als USB-HID-Tastatur ausgibt.
 `firmware/` ist ein PlatformIO-Projekt (Board `esp32-s3-devkitc-1`,
 Framework **ESP-IDF**, kein Arduino).
 
-**Version:** `0.9.0-rc5` (Beta). Kernfunktionen (WireGuard-VPN-Tunnel,
-SSH mit Passwort/ECDSA/Ed25519, Sensorik, SNMP, OTA, Web-/USB-Konsole) sind
-auf echter N16R8-Hardware in Betrieb genommen und verifiziert.
+**Version:** `0.9.0-rc23` (Beta). Kernfunktionen (WireGuard-VPN-Tunnel
+inkl. Fritzbox-Gegenstellen, SSH mit Passwort/ECDSA/Ed25519, Sensorik,
+SNMP, OTA, Web-/USB-Konsole) sind auf echter N16R8-Hardware in Betrieb
+genommen und verifiziert.
 
 Einrichten per PowerShell-Skript (baut, erkennt die Flash-Größe des
 angeschlossenen Boards automatisch, flasht, führt durch die
@@ -88,8 +91,9 @@ pio run -e esp32-s3-devkitc-1-n16r8 -t upload
   konfiguriertes WLAN nach ~10 s, mit unerreichbarem WLAN nach 5 min) sowie
   periodischem WLAN-Scan (nach Empfangsstärke sortiert) fürs Webinterface;
   WireGuard-VPN (Boot-Crash der `esp_wireguard`-Anbindung root-caused und
-  behoben, Tunnel auf echter Hardware verifiziert), Weboberfläche auch über
-  VPN erreichbar
+  behoben; PresharedKey-Unterstützung und mehrere Peer-`AllowedIPs` — der
+  Tunnel zu einer **Fritzbox**-Gegenstelle inkl. Ping/SSH über das VPN ist
+  auf echter Hardware verifiziert), Weboberfläche auch über VPN erreichbar
 - `WebServerManager`: Hauptseite, passwortgeschützte Einstellungsseite,
   WebSocket-Konsole zum angeschlossenen PC, WireGuard-Config-Upload,
   admin-only Firmware-Update per Multipart-Upload

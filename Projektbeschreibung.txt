@@ -41,6 +41,10 @@ Kommunikation
 - WebSocket
 - Webinterface mit serieller konsole zu dem steuernden pc, uploadmöglichkeit für die wireguard config
 - ssh zugang zur seriellen konsole
+- host-seitige serienkonsolen-bridge, damit die web-/ssh-konsole eine echte shell
+  des gesteuerten pc zeigt - je ein autostart-dienst für windows
+  (tools/Install-EspBmcConsole.ps1) und linux (tools/espbmc-console.py)
+- wireguard-config-import inkl. presharedkey (z.b. fritzbox-gegenstellen)
 
 
 
